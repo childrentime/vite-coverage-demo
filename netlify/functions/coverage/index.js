@@ -443,62 +443,6 @@ function filterPRCoverage(coverage, prFiles) {
   return prCoverage;
 }
 
-// 判断文件是否应该包含在覆盖率统计中
-function shouldIncludeInCoverage(filePath) {
-  // 排除一些不需要覆盖率的文件类型
-  const excludePatterns = [
-    /\.toml$/,                    // Netlify 或其他配置文件
-    /\.lock$/,                    // 锁定文件
-    /\.md$/,                      // Markdown文档
-    /\.json$/,                    // JSON配置文件
-    /\.yml$|\.yaml$/,             // YAML配置文件
-    /\.env$/,                     // 环境变量文件
-    /netlify-plugins\//,          // Netlify插件
-    /node_modules\//,             // 第三方依赖
-    /\.config\./,                 // 各种配置文件
-    /\.eslintrc/,                 // ESLint配置
-    /\.prettierrc/,               // Prettier配置
-    /\.babelrc/,                  // Babel配置
-    /package\.json$/,             // NPM配置
-    /tsconfig\.json$/,            // TypeScript配置
-    /jest\.config/,               // Jest配置
-    /\.storybook\//,              // Storybook配置
-    /\.github\//,                 // GitHub配置
-    /test\//,                     // 测试文件夹
-    /tests\//,                    // 测试文件夹
-    /\.test\./,                   // 测试文件
-    /\.spec\./,                   // 测试文件
-    /\.d\.ts$/                    // TypeScript声明文件
-  ];
-  
-  // 显式包含这些类型的文件
-  const includePatterns = [
-    /\.js$/,                      // JavaScript文件
-    /\.jsx$/,                     // React JSX文件
-    /\.ts$/,                      // TypeScript文件
-    /\.tsx$/,                     // React TSX文件
-    /\.vue$/,                     // Vue单文件组件
-    /\.svelte$/                   // Svelte组件
-  ];
-  
-  // 首先检查是否明确排除
-  for (const pattern of excludePatterns) {
-    if (pattern.test(filePath)) {
-      return false;
-    }
-  }
-  
-  // 然后检查是否明确包含
-  for (const pattern of includePatterns) {
-    if (pattern.test(filePath)) {
-      return true;
-    }
-  }
-  
-  // 默认不包含不明确的文件类型
-  return false;
-}
-
 // 分析未覆盖到的PR修改
 function analyzeUncoveredChanges(coverage, diffInfo) {
   const uncoveredChanges = {};
