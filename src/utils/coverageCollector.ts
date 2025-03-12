@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
-import localforage from 'localforage';
+import {getItem,removeItem,setItem} from 'localforage';
 
 // 覆盖率收集服务的URL
 const COVERAGE_API_URL = import.meta.env.VITE_COVERAGE_API_URL || '/.netlify/functions/coverage';
@@ -40,11 +40,11 @@ export async function initCoverageCollector() {
   console.log('初始化覆盖率收集器...');
 
   // 检查是否有未上报的覆盖率数据
-  const pendingCoverage = await localforage.getItem<any>(COVERAGE_STORAGE_KEY);
+  const pendingCoverage = await getItem<any>(COVERAGE_STORAGE_KEY);
   if (pendingCoverage) {
     console.log('发现未上报的覆盖率数据，正在上报...');
     await reportCoverage(pendingCoverage);
-    await localforage.removeItem(COVERAGE_STORAGE_KEY);
+    await removeItem(COVERAGE_STORAGE_KEY);
   }
 
   // 设置定期上报
@@ -80,25 +80,25 @@ export async function reportCurrentCoverage() {
   const coverage = window.__coverage__;
   
   // 获取上次报告的时间
-  const lastReport = await localforage.getItem<number>(LAST_REPORT_KEY) || 0;
+  const lastReport = await getItem<number>(LAST_REPORT_KEY) || 0;
   const now = Date.now();
   
   // 如果距离上次报告不到1分钟，则暂存数据等待下次上报
   if (now - lastReport < 60 * 1000) {
-    await localforage.setItem(COVERAGE_STORAGE_KEY, coverage);
+    await setItem(COVERAGE_STORAGE_KEY, coverage);
     return;
   }
   
   // 上报覆盖率数据
   try {
     await reportCoverage(coverage);
-    await localforage.setItem(LAST_REPORT_KEY, now);
-    await localforage.removeItem(COVERAGE_STORAGE_KEY);
+    await setItem(LAST_REPORT_KEY, now);
+    await removeItem(COVERAGE_STORAGE_KEY);
     console.log('覆盖率数据上报成功');
   } catch (error) {
     console.error('覆盖率数据上报失败:', error);
     // 保存到本地存储，稍后重试
-    await localforage.setItem(COVERAGE_STORAGE_KEY, coverage);
+    await setItem(COVERAGE_STORAGE_KEY, coverage);
   }
 }
 
