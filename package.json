@@ -30,7 +30,8 @@
     "pnpm": "^10.6.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "universal-user-agent": "^7.0.2"
+    "universal-user-agent": "^7.0.2",
+    "axios": "^1.8.2"
   },
   "devDependencies": {
     "@babel/core": "^7.26.10",
@@ -43,7 +44,6 @@
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^4.3.4",
-    "axios": "^1.8.2",
     "babel-plugin-istanbul": "^7.0.0",
     "cross-env": "^7.0.3",
     "eslint": "^9.21.0",
