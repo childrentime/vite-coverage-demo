@@ -20,7 +20,7 @@ export async function handler(event, context) {
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
   };
   
-  // 处理OPTIONS请求（预检请求）
+  // 处理OPTIONS请求
   if (event.httpMethod === 'OPTIONS') {
     return {
       statusCode: 200,
@@ -90,7 +90,6 @@ export async function handler(event, context) {
         console.log(`已更新PR #${prNumber}的评论`);
       } catch (error) {
         console.error('更新PR评论时出错:', error);
-        // 不要因为PR评论更新失败而使整个请求失败
       }
     } else {
       console.log(`跳过PR评论更新：prNumber=${prNumber}, hasToken=${!!GITHUB_TOKEN}`);
@@ -101,7 +100,6 @@ export async function handler(event, context) {
       headers,
       body: JSON.stringify({ 
         success: true, 
-        message: `${incremental ? 'Incremental' : 'Initial'} coverage data received`,
         savedTo: filename,
         filesCount: coverage ? Object.keys(coverage).length : 0
       })
@@ -139,7 +137,6 @@ async function githubFetch(endpoint, method = 'GET', body = null) {
     throw new Error(`GitHub API 请求失败: ${response.status} ${response.statusText} - ${errorText}`);
   }
   
-  // 如果是204 No Content，直接返回null
   if (response.status === 204) {
     return null;
   }
@@ -157,82 +154,44 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
   console.log(`准备更新PR #${prNumber}的评论，仓库: ${REPO_OWNER}/${REPO_NAME}`);
   
   try {
-    // 获取PR的文件差异信息，包含行号
-    const prFiles = await getPRDiffInfo(prNumber);
+    // 1. 获取PR的文件差异信息
+    const prDiffInfo = await getPRDiffInfo(prNumber);
     
-    if (!prFiles || Object.keys(prFiles).length === 0) {
+    if (!prDiffInfo || Object.keys(prDiffInfo).length === 0) {
       console.warn(`未找到PR #${prNumber}的文件差异信息`);
-    } else {
-      console.log(`PR #${prNumber}包含 ${Object.keys(prFiles).length} 个更改的文件`);
-    }
-    
-    // 检查PR目录中的覆盖率文件
-    const coverageFiles = readdirSync(prDir)
-      .filter(file => file.startsWith('coverage-'))
-      .map(file => join(prDir, file));
-      
-    if (coverageFiles.length === 0) {
-      console.warn(`未找到PR #${prNumber}的覆盖率文件`);
       return;
     }
     
-    console.log(`找到${coverageFiles.length}个覆盖率文件`);
+    console.log(`PR #${prNumber}包含 ${Object.keys(prDiffInfo).length} 个更改的文件`);
     
-    // 合并所有覆盖率数据
-    const mergedCoverage = {};
+    // 2. 获取覆盖率数据
+    const coverageData = await getCombinedCoverageData(prDir);
     
-    // 处理所有覆盖率文件
-    coverageFiles.forEach(file => {
-      try {
-        const coverageData = JSON.parse(readFileSync(file, 'utf-8'));
-        Object.keys(coverageData).forEach(filePath => {
-          if (!mergedCoverage[filePath]) {
-            mergedCoverage[filePath] = coverageData[filePath];
-          } else {
-            // 合并语句覆盖率
-            if (coverageData[filePath].s) {
-              Object.keys(coverageData[filePath].s).forEach(stmtId => {
-                if (mergedCoverage[filePath].s[stmtId] === 0 && coverageData[filePath].s[stmtId] > 0) {
-                  mergedCoverage[filePath].s[stmtId] = coverageData[filePath].s[stmtId];
-                }
-              });
-            }
-            
-            // 合并分支覆盖率
-            if (coverageData[filePath].b) {
-              Object.keys(coverageData[filePath].b).forEach(branchId => {
-                if (Array.isArray(coverageData[filePath].b[branchId])) {
-                  coverageData[filePath].b[branchId].forEach((count, idx) => {
-                    if (mergedCoverage[filePath].b[branchId][idx] === 0 && count > 0) {
-                      mergedCoverage[filePath].b[branchId][idx] = count;
-                    }
-                  });
-                }
-              });
-            }
-            
-            // 合并函数覆盖率
-            if (coverageData[filePath].f) {
-              Object.keys(coverageData[filePath].f).forEach(fnId => {
-                if (mergedCoverage[filePath].f[fnId] === 0 && coverageData[filePath].f[fnId] > 0) {
-                  mergedCoverage[filePath].f[fnId] = coverageData[filePath].f[fnId];
-                }
-              });
-            }
-          }
-        });
-      } catch (error) {
-        console.error(`处理文件 ${file} 时出错:`, error);
-      }
-    });
+    if (!coverageData || Object.keys(coverageData).length === 0) {
+      console.warn(`未找到PR #${prNumber}的覆盖率数据`);
+      return;
+    }
     
-    // 分析未覆盖的行
-    const uncoveredLines = findUncoveredLines(mergedCoverage, prFiles);
+    // 3. 获取覆盖率文件和PR文件的交集
+    const intersectionFiles = findIntersectionFiles(coverageData, prDiffInfo);
     
-    // 计算覆盖率统计
-    const fileStats = generateFileStats(mergedCoverage);
+    if (intersectionFiles.length === 0) {
+      console.warn(`PR #${prNumber}的文件与覆盖率数据没有交集`);
+      return;
+    }
     
-    // 生成评论内容
+    console.log(`找到 ${intersectionFiles.length} 个PR文件与覆盖率数据有交集`);
+    
+    // 4. 对于交集文件，找出未覆盖的diff行
+    const uncoveredDiffLines = findUncoveredDiffLines(coverageData, prDiffInfo, intersectionFiles);
+    
+    // 5. 生成文件覆盖率表
+    const fileStatsTable = generateFileStatsTable(coverageData, intersectionFiles);
+    
+    // 6. 生成未覆盖行报告
+    const uncoveredReport = generateUncoveredReport(uncoveredDiffLines);
+    
+    // 7. 生成评论内容
     const commentBody = `## 📊 PR增量代码覆盖率报告 (${branchName})
 提交: ${commitSha ? commitSha.substring(0, 7) : 'unknown'}
 
@@ -240,51 +199,18 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
 
 | 文件 | 语句覆盖 | 分支覆盖 | 函数覆盖 |
 |------|----------|----------|----------|
-${fileStats}
+${fileStatsTable}
 
 ### 未覆盖的PR修改
 
-${generateUncoveredReport(uncoveredLines)}
+${uncoveredReport}
 
 > 本报告基于实际用户访问页面的交互生成，仅统计PR修改的文件
 > 上次更新时间: ${getChineseTimeString()}`;
-
-      try {
-        // 先尝试创建新评论
-        await githubFetch(
-          `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`,
-          'POST',
-          { body: commentBody }
-        );
-        console.log(`在PR #${prNumber}上创建了覆盖率评论`);
-      } catch (createError) {
-        console.error('创建评论失败，尝试查找并更新现有评论:', createError);
-        
-        try {
-          // 查找现有评论
-          const comments = await githubFetch(
-            `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`
-          );
-          
-          const coverageComment = comments.find(comment => 
-            comment.body && comment.body.includes('📊 PR增量代码覆盖率报告')
-          );
-          
-          if (coverageComment) {
-            // 更新现有评论
-            await githubFetch(
-              `/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${coverageComment.id}`,
-              'PATCH',
-              { body: commentBody }
-            );
-            console.log(`更新了PR #${prNumber}上的覆盖率评论`);
-          } else {
-            console.warn(`未找到PR #${prNumber}上的覆盖率评论，无法更新`);
-          }
-        } catch (listError) {
-          console.error('查找评论失败:', listError);
-        }
-      }
+    
+    // 8. 更新或创建PR评论
+    await updateOrCreateComment(prNumber, commentBody);
+    
   } catch (error) {
     console.error(`处理PR #${prNumber}的覆盖率数据时出错:`, error);
     throw error;
@@ -294,28 +220,27 @@ ${generateUncoveredReport(uncoveredLines)}
 // 获取PR的文件差异信息
 async function getPRDiffInfo(prNumber) {
   try {
-    // 获取PR的文件列表
     const files = await githubFetch(
       `/repos/${REPO_OWNER}/${REPO_NAME}/pulls/${prNumber}/files`
     );
     
-    // 创建文件差异信息对象
-    const prFiles = {};
+    const diffInfo = {};
     
     for (const file of files) {
       // 只处理添加或修改的文件（排除删除的文件）
       if (file.status !== 'removed') {
-        // 解析补丁信息以获取修改的行号
         const changedLines = parsePatchHunks(file.patch);
         
-        prFiles[file.filename] = {
+        diffInfo[file.filename] = {
           status: file.status,
-          changedLines
+          changedLines,
+          // 保存原始路径，方便后续匹配
+          originalPath: file.filename
         };
       }
     }
     
-    return prFiles;
+    return diffInfo;
   } catch (error) {
     console.error(`获取PR #${prNumber}的文件差异信息时出错:`, error);
     return {};
@@ -324,10 +249,9 @@ async function getPRDiffInfo(prNumber) {
 
 // 解析Git补丁信息以提取修改的行号
 function parsePatchHunks(patch) {
-  if (!patch) return { additions: [], deletions: [] };
+  if (!patch) return { additions: [] };
   
   const additions = [];
-  const deletions = [];
   
   // 分割补丁为行
   const lines = patch.split('\n');
@@ -347,85 +271,185 @@ function parsePatchHunks(patch) {
       continue;
     }
     
-    // 处理正常行、添加行和删除行
+    // 处理添加的行
     if (line.startsWith('+')) {
       // 添加的行
       additions.push(lineNumber);
       lineNumber++;
     } else if (line.startsWith('-')) {
-      // 删除的行
-      deletions.push(lineNumber);
-      // 删除行不会增加目标文件的行号
+      // 删除的行 - 不影响目标文件的行号
     } else if (!line.startsWith('\\')) {
       // 上下文行（不是特殊行，如 "\ No newline at end of file"）
       lineNumber++;
     }
   }
   
-  return { additions, deletions };
+  return { additions };
 }
 
-// 在覆盖率数据中查找匹配的文件路径
-function findMatchingCoverageFile(coverage, prFilePath) {
-  // 尝试直接匹配
-  if (coverage[prFilePath]) return prFilePath;
+// 获取并合并所有覆盖率数据
+async function getCombinedCoverageData(prDir) {
+  try {
+    const coverageFiles = readdirSync(prDir)
+      .filter(file => file.startsWith('coverage-'))
+      .map(file => join(prDir, file));
+    
+    if (coverageFiles.length === 0) {
+      return null;
+    }
+    
+    // 合并所有覆盖率数据
+    const mergedCoverage = {};
+    
+    for (const file of coverageFiles) {
+      try {
+        const fileContent = readFileSync(file, 'utf-8');
+        const coverageData = JSON.parse(fileContent);
+        
+        // 合并到主覆盖率对象
+        Object.keys(coverageData).forEach(filePath => {
+          if (!mergedCoverage[filePath]) {
+            mergedCoverage[filePath] = coverageData[filePath];
+          } else {
+            mergeCoverageData(mergedCoverage[filePath], coverageData[filePath]);
+          }
+        });
+      } catch (error) {
+        console.error(`处理覆盖率文件 ${file} 时出错:`, error);
+      }
+    }
+    
+    return mergedCoverage;
+  } catch (error) {
+    console.error('合并覆盖率数据时出错:', error);
+    return null;
+  }
+}
+
+// 合并两个文件的覆盖率数据
+function mergeCoverageData(targetCoverage, sourceCoverage) {
+  // 合并语句覆盖率
+  if (targetCoverage.s && sourceCoverage.s) {
+    Object.keys(sourceCoverage.s).forEach(key => {
+      if (targetCoverage.s[key] === 0 && sourceCoverage.s[key] > 0) {
+        targetCoverage.s[key] = sourceCoverage.s[key];
+      }
+    });
+  }
   
-  // 尝试标准化路径后匹配
-  const normalizedPRPath = prFilePath.replace(/^\//, ''); // 移除开头的斜杠
+  // 合并分支覆盖率
+  if (targetCoverage.b && sourceCoverage.b) {
+    Object.keys(sourceCoverage.b).forEach(key => {
+      if (targetCoverage.b[key] && sourceCoverage.b[key]) {
+        sourceCoverage.b[key].forEach((count, idx) => {
+          if (targetCoverage.b[key][idx] === 0 && count > 0) {
+            targetCoverage.b[key][idx] = count;
+          }
+        });
+      }
+    });
+  }
   
-  // 遍历覆盖率文件查找匹配
-  for (const coverageFile of Object.keys(coverage)) {
+  // 合并函数覆盖率
+  if (targetCoverage.f && sourceCoverage.f) {
+    Object.keys(sourceCoverage.f).forEach(key => {
+      if (targetCoverage.f[key] === 0 && sourceCoverage.f[key] > 0) {
+        targetCoverage.f[key] = sourceCoverage.f[key];
+      }
+    });
+  }
+}
+
+// 找出覆盖率数据和PR文件的交集
+function findIntersectionFiles(coverageData, prDiffInfo) {
+  const intersectionFiles = [];
+  
+  // 遍历PR的文件
+  Object.keys(prDiffInfo).forEach(prFile => {
+    // 尝试找到匹配的覆盖率文件
+    const coverageFile = findMatchingCoverageFile(coverageData, prFile);
+    
+    if (coverageFile) {
+      // 保存交集信息
+      intersectionFiles.push({
+        prFile,
+        coverageFile,
+        prInfo: prDiffInfo[prFile]
+      });
+    }
+  });
+  
+  return intersectionFiles;
+}
+
+// 查找匹配的覆盖率文件
+function findMatchingCoverageFile(coverageData, prFile) {
+  // 1. 直接匹配
+  if (coverageData[prFile]) {
+    return prFile;
+  }
+  
+  // 2. 尝试标准化路径后匹配
+  const normalizedPRFile = prFile.replace(/^\//, '');
+  
+  for (const coverageFile of Object.keys(coverageData)) {
     const normalizedCoverageFile = coverageFile.replace(/^\//, '');
     
-    if (normalizedCoverageFile === normalizedPRPath ||
-        normalizedCoverageFile.endsWith(normalizedPRPath) ||
-        normalizedPRPath.endsWith(normalizedCoverageFile) ||
-        normalizedPRPath.includes('/src/') && normalizedCoverageFile.includes('/src/') && 
-        normalizedPRPath.split('/').pop() === normalizedCoverageFile.split('/').pop()) {
+    // 多种匹配策略
+    if (normalizedCoverageFile === normalizedPRFile ||
+        normalizedCoverageFile.endsWith(normalizedPRFile) ||
+        normalizedPRFile.endsWith(normalizedCoverageFile)) {
       return coverageFile;
+    }
+    
+    // 尝试匹配包含"src/"的文件名部分
+    if (normalizedPRFile.includes('/src/') && normalizedCoverageFile.includes('/src/')) {
+      const prFilename = normalizedPRFile.split('/').pop();
+      const coverageFilename = normalizedCoverageFile.split('/').pop();
+      
+      if (prFilename === coverageFilename) {
+        return coverageFile;
+      }
+    }
+    
+    // 匹配文件路径的最后两部分（例如：utils/coverageCollector.ts）
+    const prParts = normalizedPRFile.split('/');
+    const coverageParts = normalizedCoverageFile.split('/');
+    
+    if (prParts.length >= 2 && coverageParts.length >= 2) {
+      const prLastTwoParts = prParts.slice(-2).join('/');
+      const coverageLastTwoParts = coverageParts.slice(-2).join('/');
+      
+      if (prLastTwoParts === coverageLastTwoParts) {
+        return coverageFile;
+      }
     }
   }
   
-  // 没有找到匹配的文件
   return null;
 }
 
-// 查找未覆盖的行
-function findUncoveredLines(coverage, prFiles) {
-  const result = {};
+// 查找未覆盖的diff行
+function findUncoveredDiffLines(coverageData, prDiffInfo, intersectionFiles) {
+  const result = [];
   
-  // 遍历PR的修改文件
-  Object.keys(prFiles).forEach(prFilePath => {
-    const fileInfo = prFiles[prFilePath];
-    const addedLines = fileInfo.changedLines.additions;
+  // 遍历有交集的文件
+  intersectionFiles.forEach(({ prFile, coverageFile, prInfo }) => {
+    const fileCoverage = coverageData[coverageFile];
+    const addedLines = prInfo.changedLines.additions;
     
-    if (addedLines.length === 0) return; // 跳过没有新增行的文件
-    
-    // 查找覆盖率数据中匹配的文件
-    const coverageFile = findMatchingCoverageFile(coverage, prFilePath);
-    
-    if (!coverageFile) {
-      // 如果没有找到匹配的覆盖率文件，则整个文件都未覆盖
-      result[prFilePath] = {
-        totalChanges: addedLines.length,
-        uncoveredLines: [...addedLines],
-        coverageFile: null
-      };
-      return;
+    if (addedLines.length === 0) {
+      return; // 跳过没有新增行的文件
     }
     
-    // 获取文件的覆盖率数据
-    const fileCoverage = coverage[coverageFile];
-    
-    // 检查哪些添加的行没有被覆盖
+    // 查找未覆盖的行
     const uncoveredLines = [];
     
-    // istanbul生成的覆盖率数据中，statementMap记录了语句的位置信息
+    // 创建行号到语句的映射
+    const lineToStatements = {};
+    
+    // 如果有语句映射，构建行号到语句的映射
     if (fileCoverage.statementMap && fileCoverage.s) {
-      // 创建一个行号到语句ID的映射
-      const lineToStatements = {};
-      
-      // 构建行号到语句ID的映射
       Object.keys(fileCoverage.statementMap).forEach(stmtId => {
         const stmt = fileCoverage.statementMap[stmtId];
         if (stmt.start) {
@@ -437,88 +461,63 @@ function findUncoveredLines(coverage, prFiles) {
         }
       });
       
-      // 检查每一个添加的行是否有覆盖
+      // 检查每一个添加的行
       addedLines.forEach(lineNum => {
         // 如果这一行有语句
         if (lineToStatements[lineNum]) {
           // 检查该行的所有语句是否都未被覆盖
           const stmtIds = lineToStatements[lineNum];
+          // 如果所有语句都未覆盖，标记为未覆盖行
           const allUncovered = stmtIds.every(stmtId => fileCoverage.s[stmtId] === 0);
           
           if (allUncovered) {
             uncoveredLines.push(lineNum);
           }
         } else {
-          // 如果这一行没有语句（如空行、注释等），也标记为未覆盖
+          // 如果这一行没有语句（如空行、注释等），标记为未覆盖
           uncoveredLines.push(lineNum);
         }
       });
     } else {
-      // 如果没有语句映射，则假设所有行都未覆盖
+      // 如果没有语句映射，标记所有行为未覆盖
       uncoveredLines.push(...addedLines);
     }
     
     // 只在有未覆盖行的情况下记录
     if (uncoveredLines.length > 0) {
-      result[prFilePath] = {
+      // 添加到结果
+      result.push({
+        prFile,
+        coverageFile,
         totalChanges: addedLines.length,
-        uncoveredLines,
-        coverageFile
-      };
+        uncoveredLines
+      });
     }
   });
   
   return result;
 }
 
-// 将连续的数字分组
-function groupConsecutiveNumbers(numbers) {
-  if (numbers.length === 0) return [];
-  
-  // 确保数字是排序的
-  const sortedNumbers = [...numbers].sort((a, b) => a - b);
-  
-  const groups = [];
-  let currentGroup = [sortedNumbers[0]];
-  
-  for (let i = 1; i < sortedNumbers.length; i++) {
-    if (sortedNumbers[i] === sortedNumbers[i-1] + 1) {
-      // 如果是连续的，添加到当前组
-      currentGroup.push(sortedNumbers[i]);
-    } else {
-      // 否则创建新组
-      groups.push(currentGroup);
-      currentGroup = [sortedNumbers[i]];
-    }
-  }
-  
-  groups.push(currentGroup);
-  return groups;
-}
-
-// 生成文件覆盖率统计
-function generateFileStats(coverage) {
-  // 确保覆盖率对象非空
-  if (!coverage || Object.keys(coverage).length === 0) {
+// 生成文件覆盖率统计表格
+function generateFileStatsTable(coverageData, intersectionFiles) {
+  if (intersectionFiles.length === 0) {
     return "*没有发现PR修改文件的覆盖率数据*";
   }
   
   let fileStats = '';
   
-  // 对文件路径排序
-  const sortedFiles = Object.keys(coverage).sort();
-  
-  sortedFiles.forEach(filePath => {
-    const fileCoverage = coverage[filePath];
-    const simplifiedPath = filePath.replace(/^.*\/src\//, 'src/');
+  // 处理每个文件
+  intersectionFiles.forEach(({ prFile, coverageFile }) => {
+    const fileCoverage = coverageData[coverageFile];
+    // 简化路径显示
+    const simplifiedPath = prFile.replace(/^.*\/src\//, 'src/');
     
     // 计算语句覆盖率
     let stmtCovered = 0;
     let stmtTotal = 0;
     if (fileCoverage.s) {
-      const statements = Object.values(fileCoverage.s);
-      stmtTotal = statements.length;
-      stmtCovered = statements.filter(hit => hit > 0).length;
+      stmtTotal = Object.keys(fileCoverage.s).length;
+      stmtCovered = Object.values(fileCoverage.s).filter(hit => hit > 0).length;
     }
     const stmtPct = stmtTotal > 0 ? ((stmtCovered / stmtTotal) * 100).toFixed(2) : '0.00';
     
@@ -539,13 +538,12 @@ function generateFileStats(coverage) {
     let fnCovered = 0;
     let fnTotal = 0;
     if (fileCoverage.f) {
-      const functions = Object.values(fileCoverage.f);
-      fnTotal = functions.length;
-      fnCovered = functions.filter(hit => hit > 0).length;
+      fnTotal = Object.keys(fileCoverage.f).length;
+      fnCovered = Object.values(fileCoverage.f).filter(hit => hit > 0).length;
     }
     const fnPct = fnTotal > 0 ? ((fnCovered / fnTotal) * 100).toFixed(2) : '0.00';
     
-    // 添加到统计中
+    // 添加到表格
     fileStats += `| \`${simplifiedPath}\` | ${stmtCovered}/${stmtTotal} (${stmtPct}%) | ${branchCovered}/${branchTotal} (${branchPct}%) | ${fnCovered}/${fnTotal} (${fnPct}%) |\n`;
   });
   
@@ -553,20 +551,16 @@ function generateFileStats(coverage) {
 }
 
 // 生成未覆盖的行报告
-function generateUncoveredReport(uncoveredLines) {
-  if (Object.keys(uncoveredLines).length === 0) {
+function generateUncoveredReport(uncoveredDiffLines) {
+  if (uncoveredDiffLines.length === 0) {
     return "*所有修改的代码行都已被覆盖* ✅";
   }
   
   let report = "以下是PR中修改的代码行未被测试覆盖到的部分：\n\n";
   
-  // 对文件排序
-  const sortedFiles = Object.keys(uncoveredLines).sort();
-  
-  // 构建详细报告
-  for (const file of sortedFiles) {
-    const info = uncoveredLines[file];
-    const simplifiedPath = file.replace(/^.*\/src\//, 'src/');
+  // 处理每个文件
+  uncoveredDiffLines.forEach(info => {
+    const simplifiedPath = info.prFile.replace(/^.*\/src\//, 'src/');
     
     // 计算覆盖百分比
     const coveredCount = info.totalChanges - info.uncoveredLines.length;
@@ -594,9 +588,74 @@ function generateUncoveredReport(uncoveredLines) {
       
       report += '\n\n';
     }
-  }
+  });
   
   return report;
+}
+
+// 将连续的数字分组
+function groupConsecutiveNumbers(numbers) {
+  if (numbers.length === 0) return [];
+  
+  // 确保数字是排序的
+  const sortedNumbers = [...numbers].sort((a, b) => a - b);
+  
+  const groups = [];
+  let currentGroup = [sortedNumbers[0]];
+  
+  for (let i = 1; i < sortedNumbers.length; i++) {
+    if (sortedNumbers[i] === sortedNumbers[i-1] + 1) {
+      // 如果是连续的，添加到当前组
+      currentGroup.push(sortedNumbers[i]);
+    } else {
+      // 否则创建新组
+      groups.push(currentGroup);
+      currentGroup = [sortedNumbers[i]];
+    }
+  }
+  
+  groups.push(currentGroup);
+  return groups;
+}
+
+// 更新或创建PR评论
+async function updateOrCreateComment(prNumber, commentBody) {
+  try {
+    // 先尝试创建新评论
+    await githubFetch(
+      `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`,
+      'POST',
+      { body: commentBody }
+    );
+    console.log(`在PR #${prNumber}上创建了覆盖率评论`);
+  } catch (createError) {
+    console.error('创建评论失败，尝试查找并更新现有评论:', createError);
+    
+    try {
+      // 查找现有评论
+      const comments = await githubFetch(
+        `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`
+      );
+      
+      const coverageComment = comments.find(comment => 
+        comment.body && comment.body.includes('📊 PR增量代码覆盖率报告')
+      );
+      
+      if (coverageComment) {
+        // 更新现有评论
+        await githubFetch(
+          `/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${coverageComment.id}`,
+          'PATCH',
+          { body: commentBody }
+        );
+        console.log(`更新了PR #${prNumber}上的覆盖率评论`);
+      } else {
+        console.warn(`未找到PR #${prNumber}上的覆盖率评论，无法更新`);
+      }
+    } catch (listError) {
+      console.error('查找评论失败:', listError);
+    }
+  }
 }
 
 function getChineseTimeString() {
