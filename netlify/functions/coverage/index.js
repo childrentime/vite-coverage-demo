@@ -415,31 +415,88 @@ function mergeCoverageData(targetCoverage, sourceCoverage) {
 // 筛选只与PR相关的文件的覆盖率
 function filterPRCoverage(coverage, prFiles) {
   if (!prFiles || prFiles.length === 0) {
-    return coverage; // 如果没有PR文件信息，返回所有覆盖率数据
+    return coverage; // 如果没有diff信息，返回所有覆盖率数据
   }
   
   const prCoverage = {};
   
   Object.keys(coverage).forEach(filePath => {
-    // 检查覆盖率文件路径是否在PR的文件中
+    // 检查覆盖率文件路径是否在PR的diff文件中
     // 注意：这里需要处理路径差异，覆盖率中的路径可能与GitHub返回的路径格式不同
     const normalizedPath = filePath.replace(/^\//, ''); // 移除开头的斜杠
     
-    // 检查文件是否在PR文件中
-    const isInPR = prFiles.some(prFile => {
+    // 检查文件是否在diff中
+    const isInDiff = prFiles.some(diffFile => {
       // 进行一些基本的路径标准化比较
-      return prFile.endsWith(normalizedPath) || 
-             normalizedPath.endsWith(prFile) ||
-             normalizedPath.includes(prFile) ||
-             prFile.includes(normalizedPath);
+      // 这可能需要根据实际情况进行调整
+      return diffFile.endsWith(normalizedPath) || 
+             normalizedPath.endsWith(diffFile) ||
+             normalizedPath.includes(diffFile) ||
+             diffFile.includes(normalizedPath);
     });
     
-    if (isInPR) {
+    if (isInDiff) {
       prCoverage[filePath] = coverage[filePath];
     }
   });
   
   return prCoverage;
+}
+
+// 判断文件是否应该包含在覆盖率统计中
+function shouldIncludeInCoverage(filePath) {
+  // 排除一些不需要覆盖率的文件类型
+  const excludePatterns = [
+    /\.toml$/,                    // Netlify 或其他配置文件
+    /\.lock$/,                    // 锁定文件
+    /\.md$/,                      // Markdown文档
+    /\.json$/,                    // JSON配置文件
+    /\.yml$|\.yaml$/,             // YAML配置文件
+    /\.env$/,                     // 环境变量文件
+    /netlify-plugins\//,          // Netlify插件
+    /node_modules\//,             // 第三方依赖
+    /\.config\./,                 // 各种配置文件
+    /\.eslintrc/,                 // ESLint配置
+    /\.prettierrc/,               // Prettier配置
+    /\.babelrc/,                  // Babel配置
+    /package\.json$/,             // NPM配置
+    /tsconfig\.json$/,            // TypeScript配置
+    /jest\.config/,               // Jest配置
+    /\.storybook\//,              // Storybook配置
+    /\.github\//,                 // GitHub配置
+    /test\//,                     // 测试文件夹
+    /tests\//,                    // 测试文件夹
+    /\.test\./,                   // 测试文件
+    /\.spec\./,                   // 测试文件
+    /\.d\.ts$/                    // TypeScript声明文件
+  ];
+  
+  // 显式包含这些类型的文件
+  const includePatterns = [
+    /\.js$/,                      // JavaScript文件
+    /\.jsx$/,                     // React JSX文件
+    /\.ts$/,                      // TypeScript文件
+    /\.tsx$/,                     // React TSX文件
+    /\.vue$/,                     // Vue单文件组件
+    /\.svelte$/                   // Svelte组件
+  ];
+  
+  // 首先检查是否明确排除
+  for (const pattern of excludePatterns) {
+    if (pattern.test(filePath)) {
+      return false;
+    }
+  }
+  
+  // 然后检查是否明确包含
+  for (const pattern of includePatterns) {
+    if (pattern.test(filePath)) {
+      return true;
+    }
+  }
+  
+  // 默认不包含不明确的文件类型
+  return false;
 }
 
 // 分析未覆盖到的PR修改
@@ -474,29 +531,35 @@ function analyzeUncoveredChanges(coverage, diffInfo) {
     
     // istanbul生成的覆盖率数据中，statementMap记录了语句的位置信息
     if (fileCoverage.statementMap && fileCoverage.s) {
-      addedLines.forEach(lineNum => {
-        let lineCovered = false;
-        
-        // 检查这一行是否有被执行的语句
-        Object.keys(fileCoverage.statementMap).forEach(stmtId => {
-          const stmt = fileCoverage.statementMap[stmtId];
-          
-          // 如果语句的起始行与添加的行匹配
-          if (stmt.start && stmt.start.line === lineNum) {
-            // 检查该语句是否被覆盖
-            if (fileCoverage.s[stmtId] === 0) {
-              // 语句未被覆盖
-              lineCovered = false;
-            } else {
-              // 语句被覆盖了，标记整行为已覆盖
-              lineCovered = true;
-              return; // 跳出内部循环
-            }
+      // 创建一个行号到语句ID的映射
+      const lineToStatements = {};
+      
+      // 构建行号到语句ID的映射
+      Object.keys(fileCoverage.statementMap).forEach(stmtId => {
+        const stmt = fileCoverage.statementMap[stmtId];
+        if (stmt.start) {
+          const line = stmt.start.line;
+          if (!lineToStatements[line]) {
+            lineToStatements[line] = [];
           }
-        });
-        
-        // 如果行没有被任何已覆盖的语句覆盖，则记录为未覆盖
-        if (!lineCovered) {
+          lineToStatements[line].push(stmtId);
+        }
+      });
+      
+      // 检查每一个添加的行是否有覆盖
+      addedLines.forEach(lineNum => {
+        // 如果这一行有语句
+        if (lineToStatements[lineNum]) {
+          // 检查该行的所有语句是否都未被覆盖
+          const stmtIds = lineToStatements[lineNum];
+          const allUncovered = stmtIds.every(stmtId => fileCoverage.s[stmtId] === 0);
+          
+          if (allUncovered) {
+            uncoveredLines.push(lineNum);
+          }
+        } else {
+          // 如果这一行没有语句（如空行、注释等），不计入未覆盖
+          // 不过为了保险起见，我们还是标记为未覆盖
           uncoveredLines.push(lineNum);
         }
       });
