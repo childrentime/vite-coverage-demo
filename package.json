@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@octokit/plugin-paginate-rest": "^11.4.3",
+    "@octokit/plugin-request-log": "^5.3.1",
     "@octokit/rest": "^21.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
