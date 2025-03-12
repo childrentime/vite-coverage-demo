@@ -1,4 +1,4 @@
-module.exports = {
+export default {
   onPreBuild: ({ utils }) => {
     // 获取Netlify环境变量
     const isPR = process.env.CONTEXT === 'deploy-preview';
