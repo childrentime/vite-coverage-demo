@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
-import localforage from 'localforage';
+import * as localforage from 'localforage';
 
 // 覆盖率收集服务的URL
 const COVERAGE_API_URL = import.meta.env.VITE_COVERAGE_API_URL || '/.netlify/functions/coverage';
