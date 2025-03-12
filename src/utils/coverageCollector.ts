@@ -80,14 +80,23 @@ export async function initCoverageCollector() {
     removeItem(COVERAGE_STORAGE_KEY);
   }
 
-  // 页面加载完成后立即进行一次上报
-  window.addEventListener("load", () => {
-    setTimeout(() => {
-      reportCurrentCoverage(false).catch(err => {
-        console.error("初始上报失败:", err);
-      });
-    }, 2000); // 等待2秒，确保覆盖率数据已生成
-  });
+  const reportIfVisible = () => {
+    if (document.visibilityState === 'visible') {
+      console.log("页面可见，准备上报覆盖率数据");
+      
+      // 延迟上报，确保是真实用户访问
+      setTimeout(() => {
+        reportCurrentCoverage(false).catch(err => {
+          console.error("初始上报失败:", err);
+        });
+      }, 3000);
+      
+      // 已完成初始上报，不再需要监听visibilitychange事件
+      document.removeEventListener('visibilitychange', reportIfVisible);
+    }
+  };
+
+  document.addEventListener('visibilitychange', reportIfVisible);
 
   console.log("覆盖率收集器初始化完成，会话ID:", SESSION_ID);
   
