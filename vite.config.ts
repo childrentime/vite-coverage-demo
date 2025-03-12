@@ -43,7 +43,6 @@ export default defineConfig( {
     resolve: {
       mainFields: ['module', 'browser', 'main'],
     },
-    
     // esbuild 选项以保持 ESM 格式
     esbuild: {
       keepNames: true,
