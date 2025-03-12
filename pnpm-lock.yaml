@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@octokit/plugin-paginate-rest':
+        specifier: ^11.4.3
+        version: 11.4.3(@octokit/core@6.1.4)
       '@octokit/rest':
         specifier: ^21.1.1
         version: 21.1.1
