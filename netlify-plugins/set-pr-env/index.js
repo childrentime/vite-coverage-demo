@@ -5,24 +5,24 @@ export default {
     // 获取Netlify环境变量
     const isPR = process.env.CONTEXT === 'deploy-preview';
     
+    // 获取当前部署的URL - 使用当前预览URL而不是主站点URL
+    const currentDeployUrl = process.env.DEPLOY_URL || process.env.NETLIFY_DEPLOY_URL || '';
+    
     if (isPR) {
-      // 从 NETLIFY_DEPLOY_URL 或 DEPLOY_URL 中解析 PR 号码
+      // 从部署URL中解析PR号码
       let prNumber = '';
-      const deployUrl = process.env.NETLIFY_DEPLOY_URL || process.env.DEPLOY_URL || '';
-      
-      if (deployUrl) {
-        const match = deployUrl.match(/deploy-preview-(\d+)/);
+      if (currentDeployUrl) {
+        const match = currentDeployUrl.match(/deploy-preview-(\d+)/);
         if (match && match[1]) {
           prNumber = match[1];
         }
       }
       
-      // 如果上面的方法无法获取，尝试从 REVIEW_ID 获取
+      // 备用方案
       if (!prNumber && process.env.REVIEW_ID) {
         prNumber = process.env.REVIEW_ID;
       }
       
-      // 如果还是无法获取，使用时间戳作为标识
       if (!prNumber) {
         prNumber = `unknown-${Date.now()}`;
         console.log('⚠️ 无法从环境变量中获取PR号码，使用时间戳代替');
@@ -31,19 +31,24 @@ export default {
       const commitSha = process.env.COMMIT_REF || '';
       const branchName = process.env.HEAD || '';
       
-      // 设置正确的覆盖率API地址
-      // 使用当前站点的URL作为基础，指向Netlify函数
-      const siteUrl = process.env.URL || deployUrl;
-      const coverageApiUrl = `${siteUrl}/.netlify/functions/coverage`;
+      // 非常重要：使用相对URL或当前部署的完整URL
+      // 方案1：使用相对URL（推荐）
+      const coverageApiUrl = '/.netlify/functions/coverage';
+      
+      // 方案2：如果需要绝对URL，确保使用当前预览的域名
+      // 先移除末尾的斜杠（如果有）
+      const baseUrl = currentDeployUrl.replace(/\/$/, '');
+      const absoluteCoverageApiUrl = `${baseUrl}/.netlify/functions/coverage`;
       
       console.log(`检测到PR #${prNumber}，分支: ${branchName}，提交: ${commitSha}`);
-      console.log(`覆盖率API地址: ${coverageApiUrl}`);
+      console.log(`当前部署URL: ${currentDeployUrl}`);
+      console.log(`覆盖率API相对路径: ${coverageApiUrl}`);
+      console.log(`覆盖率API绝对路径: ${absoluteCoverageApiUrl} (仅供参考)`);
       
       // 设置环境变量用于构建
       process.env.PR_NUMBER = prNumber;
       process.env.BRANCH_NAME = branchName;
       process.env.COMMIT_SHA = commitSha;
-      process.env.COVERAGE_API_URL = coverageApiUrl;
       
       // 修改.env文件，确保这些环境变量在构建时可用
       utils.status.show({
@@ -51,7 +56,7 @@ export default {
         summary: `设置PR #${prNumber}的环境变量`
       });
       
-      // 创建或更新.env文件
+      // 使用相对URL避免跨域问题
       const envContent = `
 VITE_PR_NUMBER=${prNumber}
 VITE_BRANCH_NAME=${branchName}
@@ -62,7 +67,6 @@ VITE_COVERAGE_API_URL=${coverageApiUrl}
       
       fs.writeFileSync('.env.production', envContent);
       
-      // 输出更多调试信息
       console.log('环境变量设置：', {
         VITE_PR_NUMBER: prNumber,
         VITE_BRANCH_NAME: branchName,
@@ -73,21 +77,18 @@ VITE_COVERAGE_API_URL=${coverageApiUrl}
     } else {
       console.log('不是PR构建，跳过设置PR环境变量');
       
-      // 即使不是PR构建，也设置覆盖率API地址（用于主分支覆盖率收集）
-      const siteUrl = process.env.URL || '';
-      if (siteUrl) {
-        const coverageApiUrl = `${siteUrl}/.netlify/functions/coverage`;
-        
-        // 更新.env文件，但不启用覆盖率收集
-        const envContent = `
+      // 即使不是PR构建，也设置覆盖率API地址
+      // 同样使用相对URL避免跨域问题
+      const coverageApiUrl = '/.netlify/functions/coverage';
+      
+      const envContent = `
 VITE_COLLECT_COVERAGE=false
 VITE_COVERAGE_API_URL=${coverageApiUrl}
-        `.trim();
-        
-        fs.writeFileSync('.env.production', envContent);
-        
-        console.log('为主分支设置了覆盖率API地址（但未启用覆盖率收集）');
-      }
+      `.trim();
+      
+      fs.writeFileSync('.env.production', envContent);
+      
+      console.log('为主分支设置了覆盖率API地址（但未启用覆盖率收集）');
     }
   }
 }
