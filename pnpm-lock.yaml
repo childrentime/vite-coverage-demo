@@ -14,6 +14,9 @@ importers:
       '@octokit/core':
         specifier: ^6.1.4
         version: 6.1.4
+      '@octokit/endpoint':
+        specifier: ^10.1.3
+        version: 10.1.3
       '@octokit/graphql':
         specifier: ^8.2.1
         version: 8.2.1
