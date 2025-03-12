@@ -63,9 +63,9 @@ export async function handler(event, context) {
     }
     
     // 提取元数据
-    const { prNumber, branchName, commitSha, sessionId } = metadata;
+    const { prNumber, branchName, commitSha, sessionId, incremental } = metadata;
     
-    console.log(`接收到覆盖率数据：PR=${prNumber}, 分支=${branchName}, 会话=${sessionId}`);
+    console.log(`接收到${incremental ? '增量' : '初始'}覆盖率数据：PR=${prNumber}, 分支=${branchName}, 会话=${sessionId}`);
     
     // 为每个PR创建单独的目录
     const prDir = join(coverageDir, `pr-${prNumber || 'main'}`);
@@ -75,13 +75,13 @@ export async function handler(event, context) {
     
     // 保存该会话的覆盖率数据
     const timestamp = Date.now();
-    const filename = `coverage-${sessionId}-${timestamp}.json`;
+    const filename = `coverage-${sessionId}-${timestamp}${incremental ? '-incremental' : ''}.json`;
     writeFileSync(
       join(prDir, filename),
       JSON.stringify(coverage, null, 2)
     );
     
-    console.log(`保存覆盖率数据到 ${filename}`);
+    console.log(`保存${incremental ? '增量' : '初始'}覆盖率数据到 ${filename}`);
     
     // 如果是PR，且有GitHub Token，尝试更新PR评论
     if (prNumber && GITHUB_TOKEN) {
@@ -101,7 +101,7 @@ export async function handler(event, context) {
       headers,
       body: JSON.stringify({ 
         success: true, 
-        message: 'Coverage data received',
+        message: `${incremental ? 'Incremental' : 'Initial'} coverage data received`,
         savedTo: filename,
         filesCount: coverage ? Object.keys(coverage).length : 0
       })
@@ -156,83 +156,70 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
   
   console.log(`准备更新PR #${prNumber}的评论，仓库: ${REPO_OWNER}/${REPO_NAME}`);
   
-  // 检查PR目录中的覆盖率文件
-  const coverageFiles = readdirSync(prDir)
-    .filter(file => file.startsWith('coverage-'))
-    .map(file => join(prDir, file));
-    
-  if (coverageFiles.length === 0) {
-    console.warn(`未找到PR #${prNumber}的覆盖率文件`);
-    return;
-  }
-  
-  console.log(`找到${coverageFiles.length}个覆盖率文件`);
-  
-  // 合并所有覆盖率数据
-  const mergedCoverage = {};
-  
-  coverageFiles.forEach(file => {
-    try {
-      const coverageData = JSON.parse(readFileSync(file, 'utf-8'));
-      Object.keys(coverageData).forEach(filePath => {
-        if (!mergedCoverage[filePath]) {
-          mergedCoverage[filePath] = coverageData[filePath];
-        } else {
-          // 合并覆盖率数据（这里简化处理，实际应该使用专业工具）
-          const existingCoverage = mergedCoverage[filePath];
-          const newCoverage = coverageData[filePath];
-          
-          // 合并语句覆盖率
-          if (existingCoverage.s && newCoverage.s) {
-            Object.keys(newCoverage.s).forEach(key => {
-              if (existingCoverage.s[key] === 0 && newCoverage.s[key] > 0) {
-                existingCoverage.s[key] = newCoverage.s[key];
-              }
-            });
-          }
-          
-          // 合并分支覆盖率
-          if (existingCoverage.b && newCoverage.b) {
-            Object.keys(newCoverage.b).forEach(key => {
-              if (existingCoverage.b[key] && newCoverage.b[key]) {
-                newCoverage.b[key].forEach((count, idx) => {
-                  if (existingCoverage.b[key][idx] === 0 && count > 0) {
-                    existingCoverage.b[key][idx] = count;
-                  }
-                });
-              }
-            });
-          }
-          
-          // 合并函数覆盖率
-          if (existingCoverage.f && newCoverage.f) {
-            Object.keys(newCoverage.f).forEach(key => {
-              if (existingCoverage.f[key] === 0 && newCoverage.f[key] > 0) {
-                existingCoverage.f[key] = newCoverage.f[key];
-              }
-            });
-          }
-        }
-      });
-    } catch (error) {
-      console.error(`处理文件 ${file} 时出错:`, error);
-    }
-  });
-  
-  // 保存合并后的覆盖率数据
-  const mergedFilePath = join(prDir, 'merged-coverage.json');
-  writeFileSync(mergedFilePath, JSON.stringify(mergedCoverage, null, 2));
-  
-  // 计算覆盖率统计信息
-  const stats = calculateCoverageStats(mergedCoverage);
-  
-  // 更新GitHub PR评论
   try {
-    // 生成评论内容
-    const commentBody = `## 📊 代码覆盖率报告 (${branchName})
+    // 获取PR的diff信息
+    const diffFiles = await getDiffFiles(prNumber);
+    
+    if (!diffFiles || diffFiles.length === 0) {
+      console.warn(`未找到PR #${prNumber}的diff信息`);
+    } else {
+      console.log(`PR #${prNumber}包含 ${diffFiles.length} 个更改的文件`);
+    }
+    
+    // 检查PR目录中的覆盖率文件
+    const coverageFiles = readdirSync(prDir)
+      .filter(file => file.startsWith('coverage-'))
+      .map(file => join(prDir, file));
+      
+    if (coverageFiles.length === 0) {
+      console.warn(`未找到PR #${prNumber}的覆盖率文件`);
+      return;
+    }
+    
+    console.log(`找到${coverageFiles.length}个覆盖率文件`);
+    
+    // 合并所有覆盖率数据，优先合并增量数据
+    const initialCoverageFiles = coverageFiles.filter(file => !file.includes('-incremental'));
+    const incrementalCoverageFiles = coverageFiles.filter(file => file.includes('-incremental'));
+    
+    // 先处理初始覆盖率文件
+    const mergedCoverage = {};
+    initialCoverageFiles.forEach(file => {
+      try {
+        const coverageData = JSON.parse(readFileSync(file, 'utf-8'));
+        mergeCoverageData(mergedCoverage, coverageData);
+      } catch (error) {
+        console.error(`处理文件 ${file} 时出错:`, error);
+      }
+    });
+    
+    // 再处理增量覆盖率文件（增量数据优先级更高）
+    incrementalCoverageFiles.forEach(file => {
+      try {
+        const coverageData = JSON.parse(readFileSync(file, 'utf-8'));
+        mergeCoverageData(mergedCoverage, coverageData);
+      } catch (error) {
+        console.error(`处理文件 ${file} 时出错:`, error);
+      }
+    });
+    
+    // 保存合并后的覆盖率数据
+    const mergedFilePath = join(prDir, 'merged-coverage.json');
+    writeFileSync(mergedFilePath, JSON.stringify(mergedCoverage, null, 2));
+    
+    // 筛选只与PR相关的文件的覆盖率
+    const prCoverage = filterPRCoverage(mergedCoverage, diffFiles);
+    
+    // 计算PR相关文件的覆盖率统计信息
+    const stats = calculateCoverageStats(prCoverage);
+    
+    // 更新GitHub PR评论
+    try {
+      // 生成评论内容
+      const commentBody = `## 📊 PR增量代码覆盖率报告 (${branchName})
 提交: ${commitSha ? commitSha.substring(0, 7) : 'unknown'}
 
-### 覆盖率统计
+### 增量覆盖率统计
 
 | 指标 | 覆盖 | 总数 | 覆盖率 |
 |------|------|------|--------|
@@ -240,52 +227,148 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
 | 分支 | ${stats.branches.covered} | ${stats.branches.total} | ${stats.branches.pct}% |
 | 函数 | ${stats.functions.covered} | ${stats.functions.total} | ${stats.functions.pct}% |
 
-> 本报告基于实际用户访问页面的交互生成
+> 本报告基于实际用户访问页面的交互生成，仅统计PR修改的文件
 > 上次更新时间: ${new Date().toISOString()}`;
 
-    console.log('准备更新GitHub评论');
-    
-    try {
-      // 先尝试创建新评论
-      await githubFetch(
-        `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`,
-        'POST',
-        { body: commentBody }
-      );
-      console.log(`在PR #${prNumber}上创建了覆盖率评论`);
-    } catch (createError) {
-      console.error('创建评论失败，尝试查找并更新现有评论:', createError);
+      console.log('准备更新GitHub评论');
       
       try {
-        // 查找现有评论
-        const comments = await githubFetch(
-          `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`
+        // 先尝试创建新评论
+        await githubFetch(
+          `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`,
+          'POST',
+          { body: commentBody }
         );
+        console.log(`在PR #${prNumber}上创建了覆盖率评论`);
+      } catch (createError) {
+        console.error('创建评论失败，尝试查找并更新现有评论:', createError);
         
-        const coverageComment = comments.find(comment => 
-          comment.body && comment.body.includes('📊 代码覆盖率报告')
-        );
-        
-        if (coverageComment) {
-          // 更新现有评论
-          await githubFetch(
-            `/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${coverageComment.id}`,
-            'PATCH',
-            { body: commentBody }
+        try {
+          // 查找现有评论
+          const comments = await githubFetch(
+            `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`
           );
-          console.log(`更新了PR #${prNumber}上的覆盖率评论`);
-        } else {
-          console.warn(`未找到PR #${prNumber}上的覆盖率评论，无法更新`);
+          
+          const coverageComment = comments.find(comment => 
+            comment.body && comment.body.includes('📊 PR增量代码覆盖率报告')
+          );
+          
+          if (coverageComment) {
+            // 更新现有评论
+            await githubFetch(
+              `/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${coverageComment.id}`,
+              'PATCH',
+              { body: commentBody }
+            );
+            console.log(`更新了PR #${prNumber}上的覆盖率评论`);
+          } else {
+            console.warn(`未找到PR #${prNumber}上的覆盖率评论，无法更新`);
+          }
+        } catch (listError) {
+          console.error('查找评论失败:', listError);
         }
-      } catch (listError) {
-        console.error('查找评论失败:', listError);
       }
+    } catch (error) {
+      console.error('更新GitHub PR评论时出错:', error);
+      // 抛出错误以便上层函数可以捕获
+      throw error;
     }
   } catch (error) {
-    console.error('更新GitHub PR评论时出错:', error);
-    // 抛出错误以便上层函数可以捕获
+    console.error(`处理PR #${prNumber}的覆盖率数据时出错:`, error);
     throw error;
   }
+}
+
+// 获取PR的差异文件
+async function getDiffFiles(prNumber) {
+  try {
+    // 获取PR的文件列表
+    const files = await githubFetch(
+      `/repos/${REPO_OWNER}/${REPO_NAME}/pulls/${prNumber}/files`
+    );
+    
+    // 只返回添加或修改的文件路径（排除删除的文件）
+    return files
+      .filter(file => file.status !== 'removed')
+      .map(file => file.filename);
+  } catch (error) {
+    console.error(`获取PR #${prNumber}的差异文件时出错:`, error);
+    return [];
+  }
+}
+
+// 合并覆盖率数据
+function mergeCoverageData(targetCoverage, sourceCoverage) {
+  Object.keys(sourceCoverage).forEach(filePath => {
+    if (!targetCoverage[filePath]) {
+      targetCoverage[filePath] = sourceCoverage[filePath];
+    } else {
+      // 合并覆盖率数据（这里简化处理，实际应该使用专业工具）
+      const existingCoverage = targetCoverage[filePath];
+      const newCoverage = sourceCoverage[filePath];
+      
+      // 合并语句覆盖率
+      if (existingCoverage.s && newCoverage.s) {
+        Object.keys(newCoverage.s).forEach(key => {
+          if (existingCoverage.s[key] === 0 && newCoverage.s[key] > 0) {
+            existingCoverage.s[key] = newCoverage.s[key];
+          }
+        });
+      }
+      
+      // 合并分支覆盖率
+      if (existingCoverage.b && newCoverage.b) {
+        Object.keys(newCoverage.b).forEach(key => {
+          if (existingCoverage.b[key] && newCoverage.b[key]) {
+            newCoverage.b[key].forEach((count, idx) => {
+              if (existingCoverage.b[key][idx] === 0 && count > 0) {
+                existingCoverage.b[key][idx] = count;
+              }
+            });
+          }
+        });
+      }
+      
+      // 合并函数覆盖率
+      if (existingCoverage.f && newCoverage.f) {
+        Object.keys(newCoverage.f).forEach(key => {
+          if (existingCoverage.f[key] === 0 && newCoverage.f[key] > 0) {
+            existingCoverage.f[key] = newCoverage.f[key];
+          }
+        });
+      }
+    }
+  });
+}
+
+// 筛选只与PR相关的文件的覆盖率
+function filterPRCoverage(coverage, diffFiles) {
+  if (!diffFiles || diffFiles.length === 0) {
+    return coverage; // 如果没有diff信息，返回所有覆盖率数据
+  }
+  
+  const prCoverage = {};
+  
+  Object.keys(coverage).forEach(filePath => {
+    // 检查覆盖率文件路径是否在PR的diff文件中
+    // 注意：这里需要处理路径差异，覆盖率中的路径可能与GitHub返回的路径格式不同
+    const normalizedPath = filePath.replace(/^\//, ''); // 移除开头的斜杠
+    
+    // 检查文件是否在diff中
+    const isInDiff = diffFiles.some(diffFile => {
+      // 进行一些基本的路径标准化比较
+      // 这可能需要根据实际情况进行调整
+      return diffFile.endsWith(normalizedPath) || 
+             normalizedPath.endsWith(diffFile) ||
+             normalizedPath.includes(diffFile);
+    });
+    
+    if (isInDiff) {
+      prCoverage[filePath] = coverage[filePath];
+    }
+  });
+  
+  return prCoverage;
 }
 
 // 计算覆盖率统计信息
