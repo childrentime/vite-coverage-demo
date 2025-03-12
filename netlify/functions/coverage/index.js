@@ -215,6 +215,9 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
     
     // 更新GitHub PR评论
     try {
+      // 生成每个文件的覆盖率报告
+      const fileReports = generateFileReports(prCoverage);
+      
       // 生成评论内容
       const commentBody = `## 📊 PR增量代码覆盖率报告 (${branchName})
 提交: ${commitSha ? commitSha.substring(0, 7) : 'unknown'}
@@ -226,6 +229,10 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
 | 语句 | ${stats.statements.covered} | ${stats.statements.total} | ${stats.statements.pct}% |
 | 分支 | ${stats.branches.covered} | ${stats.branches.total} | ${stats.branches.pct}% |
 | 函数 | ${stats.functions.covered} | ${stats.functions.total} | ${stats.functions.pct}% |
+
+### 文件详细覆盖率
+
+${fileReports}
 
 > 本报告基于实际用户访问页面的交互生成，仅统计PR修改的文件
 > 上次更新时间: ${new Date().toISOString()}`;
@@ -423,4 +430,62 @@ function calculateCoverageStats(coverage) {
       pct: totalFunctions > 0 ? (coveredFunctions / totalFunctions * 100).toFixed(2) : '0.00'
     }
   };
+}
+
+// 生成每个文件的覆盖率报告
+function generateFileReports(coverage) {
+  if (Object.keys(coverage).length === 0) {
+    return "*没有发现PR修改文件的覆盖率数据*";
+  }
+  
+  let fileReports = '| 文件 | 语句覆盖 | 分支覆盖 | 函数覆盖 |\n';
+  fileReports += '|------|----------|----------|----------|\n';
+  
+  // 对文件路径排序，使报告更加有序
+  const sortedFiles = Object.keys(coverage).sort();
+  
+  sortedFiles.forEach(filePath => {
+    const fileCoverage = coverage[filePath];
+    
+    // 计算该文件的语句覆盖率
+    let stmtCovered = 0;
+    let stmtTotal = 0;
+    if (fileCoverage.s) {
+      const statements = Object.values(fileCoverage.s);
+      stmtTotal = statements.length;
+      stmtCovered = statements.filter(hit => hit > 0).length;
+    }
+    const stmtPct = stmtTotal > 0 ? ((stmtCovered / stmtTotal) * 100).toFixed(2) : '0.00';
+    
+    // 计算该文件的分支覆盖率
+    let branchCovered = 0;
+    let branchTotal = 0;
+    if (fileCoverage.b) {
+      Object.values(fileCoverage.b).forEach(branches => {
+        if (Array.isArray(branches)) {
+          branchTotal += branches.length;
+          branchCovered += branches.filter(hit => hit > 0).length;
+        }
+      });
+    }
+    const branchPct = branchTotal > 0 ? ((branchCovered / branchTotal) * 100).toFixed(2) : '0.00';
+    
+    // 计算该文件的函数覆盖率
+    let fnCovered = 0;
+    let fnTotal = 0;
+    if (fileCoverage.f) {
+      const functions = Object.values(fileCoverage.f);
+      fnTotal = functions.length;
+      fnCovered = functions.filter(hit => hit > 0).length;
+    }
+    const fnPct = fnTotal > 0 ? ((fnCovered / fnTotal) * 100).toFixed(2) : '0.00';
+    
+    // 获取简化的文件路径，去除前缀路径
+    const simplifiedPath = filePath.replace(/^.*\/src\//, 'src/');
+    
+    // 添加到报告中
+    fileReports += `| \`${simplifiedPath}\` | ${stmtCovered}/${stmtTotal} (${stmtPct}%) | ${branchCovered}/${branchTotal} (${branchPct}%) | ${fnCovered}/${fnTotal} (${fnPct}%) |\n`;
+  });
+  
+  return fileReports;
 }
