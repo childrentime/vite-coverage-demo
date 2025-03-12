@@ -1,4 +1,3 @@
-import axios from 'axios';
 import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -12,16 +11,6 @@ const coverageDir = join('/tmp', 'coverage-data');
 if (!existsSync(coverageDir)) {
   mkdirSync(coverageDir, { recursive: true });
 }
-
-// 配置axios实例，用于GitHub API请求
-const githubAPI = axios.create({
-  baseURL: 'https://api.github.com',
-  headers: {
-    'Authorization': `token ${GITHUB_TOKEN}`,
-    'Accept': 'application/vnd.github.v3+json',
-    'Content-Type': 'application/json'
-  }
-});
 
 export async function handler(event, context) {
   // 允许跨域请求
@@ -127,6 +116,37 @@ export async function handler(event, context) {
   }
 }
 
+// GitHub API调用辅助函数
+async function githubFetch(endpoint, method = 'GET', body = null) {
+  const url = `https://api.github.com${endpoint}`;
+  const options = {
+    method,
+    headers: {
+      'Authorization': `token ${GITHUB_TOKEN}`,
+      'Accept': 'application/vnd.github.v3+json',
+      'Content-Type': 'application/json'
+    }
+  };
+  
+  if (body) {
+    options.body = JSON.stringify(body);
+  }
+  
+  const response = await fetch(url, options);
+  
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`GitHub API 请求失败: ${response.status} ${response.statusText} - ${errorText}`);
+  }
+  
+  // 如果是204 No Content，直接返回null
+  if (response.status === 204) {
+    return null;
+  }
+  
+  return await response.json();
+}
+
 // 更新GitHub PR评论
 async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) {
   if (!GITHUB_TOKEN || !REPO_OWNER || !REPO_NAME) {
@@ -227,8 +247,9 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
     
     try {
       // 先尝试创建新评论
-      await githubAPI.post(
+      await githubFetch(
         `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`,
+        'POST',
         { body: commentBody }
       );
       console.log(`在PR #${prNumber}上创建了覆盖率评论`);
@@ -237,19 +258,19 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
       
       try {
         // 查找现有评论
-        const response = await githubAPI.get(
+        const comments = await githubFetch(
           `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`
         );
         
-        const comments = response.data;
         const coverageComment = comments.find(comment => 
           comment.body && comment.body.includes('📊 代码覆盖率报告')
         );
         
         if (coverageComment) {
           // 更新现有评论
-          await githubAPI.patch(
+          await githubFetch(
             `/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${coverageComment.id}`,
+            'PATCH',
             { body: commentBody }
           );
           console.log(`更新了PR #${prNumber}上的覆盖率评论`);
