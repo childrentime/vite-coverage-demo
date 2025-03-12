@@ -26,6 +26,9 @@ importers:
       '@octokit/rest':
         specifier: ^21.1.1
         version: 21.1.1
+      '@octokit/types':
+        specifier: ^13.8.0
+        version: 13.8.0
       add:
         specifier: ^2.0.6
         version: 2.0.6
