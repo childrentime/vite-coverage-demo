@@ -4,8 +4,8 @@ import { join } from 'path';
 
 // 获取环境变量
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-const REPO_OWNER = process.env.REPO_OWNER;
-const REPO_NAME = process.env.REPO_NAME;
+const REPO_OWNER = process.env.REPO_OWNER || 'default-owner';
+const REPO_NAME = process.env.REPO_NAME || 'default-repo';
 
 // 创建临时目录用于存储覆盖率数据
 const coverageDir = join('/tmp', 'coverage-data');
@@ -40,7 +40,19 @@ export async function handler(event, context) {
   }
   
   try {
-    const body = JSON.parse(event.body);
+    // 解析请求体
+    let body;
+    try {
+      body = JSON.parse(event.body);
+    } catch (e) {
+      console.error('Failed to parse request body:', e);
+      return { 
+        statusCode: 400, 
+        headers,
+        body: JSON.stringify({ error: 'Invalid JSON in request body' }) 
+      };
+    }
+    
     const { coverage, metadata } = body;
     
     if (!coverage || !metadata) {
@@ -51,7 +63,10 @@ export async function handler(event, context) {
       };
     }
     
+    // 提取元数据
     const { prNumber, branchName, commitSha, sessionId } = metadata;
+    
+    console.log(`接收到覆盖率数据：PR=${prNumber}, 分支=${branchName}, 会话=${sessionId}`);
     
     // 为每个PR创建单独的目录
     const prDir = join(coverageDir, `pr-${prNumber || 'main'}`);
@@ -60,28 +75,44 @@ export async function handler(event, context) {
     }
     
     // 保存该会话的覆盖率数据
-    const filename = `coverage-${sessionId}-${Date.now()}.json`;
+    const timestamp = Date.now();
+    const filename = `coverage-${sessionId}-${timestamp}.json`;
     writeFileSync(
       join(prDir, filename),
       JSON.stringify(coverage, null, 2)
     );
     
-    // 如果是PR，尝试更新PR评论
+    console.log(`保存覆盖率数据到 ${filename}`);
+    
+    // 如果是PR，且有GitHub Token，尝试更新PR评论
     if (prNumber && GITHUB_TOKEN) {
-      await updatePullRequestComment(prNumber, branchName, commitSha, prDir);
+      try {
+        await updatePullRequestComment(prNumber, branchName, commitSha, prDir);
+        console.log(`已更新PR #${prNumber}的评论`);
+      } catch (error) {
+        console.error('更新PR评论时出错:', error);
+        // 不要因为PR评论更新失败而使整个请求失败
+      }
+    } else {
+      console.log(`跳过PR评论更新：prNumber=${prNumber}, hasToken=${!!GITHUB_TOKEN}`);
     }
     
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ success: true, message: 'Coverage data received' })
+      body: JSON.stringify({ 
+        success: true, 
+        message: 'Coverage data received',
+        savedTo: filename,
+        filesCount: coverage ? Object.keys(coverage).length : 0
+      })
     };
   } catch (error) {
-    console.error('Error handling coverage data:', error);
+    console.error('处理覆盖率数据时出错:', error);
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: 'Failed to process coverage data' })
+      body: JSON.stringify({ error: 'Failed to process coverage data', details: error.message })
     };
   }
 }
@@ -89,9 +120,11 @@ export async function handler(event, context) {
 // 更新GitHub PR评论
 async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) {
   if (!GITHUB_TOKEN || !REPO_OWNER || !REPO_NAME) {
-    console.warn('GitHub token or repo info not set, skipping PR comment update');
+    console.warn('GitHub token或仓库信息未设置，跳过PR评论更新');
     return;
   }
+  
+  console.log(`准备更新PR #${prNumber}的评论，仓库: ${REPO_OWNER}/${REPO_NAME}`);
   
   // 检查PR目录中的覆盖率文件
   const coverageFiles = readdirSync(prDir)
@@ -99,9 +132,11 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
     .map(file => join(prDir, file));
     
   if (coverageFiles.length === 0) {
-    console.warn(`No coverage files found for PR #${prNumber}`);
+    console.warn(`未找到PR #${prNumber}的覆盖率文件`);
     return;
   }
+  
+  console.log(`找到${coverageFiles.length}个覆盖率文件`);
   
   // 合并所有覆盖率数据
   const mergedCoverage = {};
@@ -150,7 +185,7 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
         }
       });
     } catch (error) {
-      console.error(`Error processing file ${file}:`, error);
+      console.error(`处理文件 ${file} 时出错:`, error);
     }
   });
   
@@ -163,11 +198,18 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
   
   // 更新GitHub PR评论
   try {
-    const octokit = new Octokit({ auth: GITHUB_TOKEN });
+    // 创建Octokit实例
+    const octokit = new Octokit({ 
+      auth: GITHUB_TOKEN,
+      // 添加下面的选项，解决"endpoint is not iterable"错误
+      request: {
+        fetch: fetch
+      }
+    });
     
     // 生成评论内容
     const commentBody = `## 📊 代码覆盖率报告 (${branchName})
-提交: ${commitSha.substring(0, 7)}
+提交: ${commitSha ? commitSha.substring(0, 7) : 'unknown'}
 
 ### 覆盖率统计
 
@@ -180,38 +222,52 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
 > 本报告基于实际用户访问页面的交互生成
 > 上次更新时间: ${new Date().toISOString()}`;
 
-    // 检查PR是否已有覆盖率评论
-    const { data: comments } = await octokit.issues.listComments({
-      owner: REPO_OWNER,
-      repo: REPO_NAME,
-      issue_number: parseInt(prNumber)
-    });
+    console.log('准备更新GitHub评论');
     
-    const coverageComment = comments.find(comment => 
-      comment.body.includes('📊 代码覆盖率报告')
-    );
-    
-    if (coverageComment) {
-      // 更新已有评论
-      await octokit.issues.updateComment({
-        owner: REPO_OWNER,
-        repo: REPO_NAME,
-        comment_id: coverageComment.id,
-        body: commentBody
-      });
-      console.log(`Updated coverage comment on PR #${prNumber}`);
-    } else {
-      // 创建新评论
+    try {
+      // 直接尝试创建评论，如果已存在类似评论则忽略
       await octokit.issues.createComment({
         owner: REPO_OWNER,
         repo: REPO_NAME,
-        issue_number: parseInt(prNumber),
+        issue_number: parseInt(prNumber, 10),
         body: commentBody
       });
-      console.log(`Created coverage comment on PR #${prNumber}`);
+      console.log(`在PR #${prNumber}上创建了覆盖率评论`);
+    } catch (createError) {
+      console.error('创建评论失败，尝试查找并更新现有评论:', createError);
+      
+      try {
+        // 查找现有评论
+        const { data: comments } = await octokit.issues.listComments({
+          owner: REPO_OWNER,
+          repo: REPO_NAME,
+          issue_number: parseInt(prNumber, 10)
+        });
+        
+        const coverageComment = comments.find(comment => 
+          comment.body && comment.body.includes('📊 代码覆盖率报告')
+        );
+        
+        if (coverageComment) {
+          // 更新现有评论
+          await octokit.issues.updateComment({
+            owner: REPO_OWNER,
+            repo: REPO_NAME,
+            comment_id: coverageComment.id,
+            body: commentBody
+          });
+          console.log(`更新了PR #${prNumber}上的覆盖率评论`);
+        } else {
+          console.warn(`未找到PR #${prNumber}上的覆盖率评论，无法更新`);
+        }
+      } catch (listError) {
+        console.error('查找评论失败:', listError);
+      }
     }
   } catch (error) {
-    console.error('Error updating GitHub PR comment:', error);
+    console.error('更新GitHub PR评论时出错:', error);
+    // 抛出错误以便上层函数可以捕获
+    throw error;
   }
 }
 
@@ -226,22 +282,28 @@ function calculateCoverageStats(coverage) {
   
   Object.values(coverage).forEach(fileCoverage => {
     // 语句覆盖率
-    const statements = Object.values(fileCoverage.s || {});
-    totalStatements += statements.length;
-    coveredStatements += statements.filter(hit => hit > 0).length;
+    if (fileCoverage.s) {
+      const statements = Object.values(fileCoverage.s);
+      totalStatements += statements.length;
+      coveredStatements += statements.filter(hit => hit > 0).length;
+    }
     
     // 分支覆盖率
     if (fileCoverage.b) {
       Object.values(fileCoverage.b).forEach(branches => {
-        totalBranches += branches.length;
-        coveredBranches += branches.filter(hit => hit > 0).length;
+        if (Array.isArray(branches)) {
+          totalBranches += branches.length;
+          coveredBranches += branches.filter(hit => hit > 0).length;
+        }
       });
     }
     
     // 函数覆盖率
-    const functions = Object.values(fileCoverage.f || {});
-    totalFunctions += functions.length;
-    coveredFunctions += functions.filter(hit => hit > 0).length;
+    if (fileCoverage.f) {
+      const functions = Object.values(fileCoverage.f);
+      totalFunctions += functions.length;
+      coveredFunctions += functions.filter(hit => hit > 0).length;
+    }
   });
   
   return {
