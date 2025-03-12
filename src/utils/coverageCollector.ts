@@ -97,6 +97,7 @@ export async function initCoverageCollector() {
   };
 
   document.addEventListener('visibilitychange', reportIfVisible);
+  reportIfVisible();
 
   console.log("覆盖率收集器初始化完成，会话ID:", SESSION_ID);
   
