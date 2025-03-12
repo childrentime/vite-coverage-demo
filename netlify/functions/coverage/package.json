@@ -1,0 +1,9 @@
+{
+  "name": "coverage-function",
+  "version": "1.0.0",
+  "description": "Coverage collection serverless function",
+  "main": "index.js",
+  "dependencies": {
+    "@octokit/rest": "^19.0.13"
+  }
+}

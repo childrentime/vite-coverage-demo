@@ -1,0 +1,20 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+# 主分支的配置
+[context.production]
+  environment = { COLLECT_COVERAGE = "false" }
+
+# 部署预览的配置（PR）
+[context.deploy-preview]
+  environment = { COLLECT_COVERAGE = "true", VITE_COVERAGE_API_URL = "https://your-coverage-api.example.com/api/coverage" }
+
+# 定义构建前的脚本，获取PR信息
+[build.environment]
+  NODE_VERSION = "20"
+
+# 自定义构建插件，用于设置PR相关环境变量
+[[plugins]]
+  package = "./netlify-plugins/set-pr-env"
