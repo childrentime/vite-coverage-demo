@@ -41,6 +41,9 @@ importers:
       add:
         specifier: ^2.0.6
         version: 2.0.6
+      before-after-hook:
+        specifier: ^3.0.2
+        version: 3.0.2
       pnpm:
         specifier: ^10.6.2
         version: 10.6.2
