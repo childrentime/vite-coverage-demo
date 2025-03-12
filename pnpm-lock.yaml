@@ -14,6 +14,9 @@ importers:
       '@octokit/core':
         specifier: ^6.1.4
         version: 6.1.4
+      '@octokit/graphql':
+        specifier: ^8.2.1
+        version: 8.2.1
       '@octokit/plugin-paginate-rest':
         specifier: ^11.4.3
         version: 11.4.3(@octokit/core@6.1.4)
