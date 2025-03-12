@@ -1,6 +1,6 @@
-const { Octokit } = require('@octokit/rest');
-const fs = require('fs');
-const path = require('path');
+import { Octokit } from '@octokit/rest';
+import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 'fs';
+import { join } from 'path';
 
 // 获取环境变量
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
@@ -8,12 +8,12 @@ const REPO_OWNER = process.env.REPO_OWNER;
 const REPO_NAME = process.env.REPO_NAME;
 
 // 创建临时目录用于存储覆盖率数据
-const coverageDir = path.join('/tmp', 'coverage-data');
-if (!fs.existsSync(coverageDir)) {
-  fs.mkdirSync(coverageDir, { recursive: true });
+const coverageDir = join('/tmp', 'coverage-data');
+if (!existsSync(coverageDir)) {
+  mkdirSync(coverageDir, { recursive: true });
 }
 
-exports.handler = async (event, context) => {
+export async function handler(event, context) {
   // 允许跨域请求
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -54,15 +54,15 @@ exports.handler = async (event, context) => {
     const { prNumber, branchName, commitSha, sessionId } = metadata;
     
     // 为每个PR创建单独的目录
-    const prDir = path.join(coverageDir, `pr-${prNumber || 'main'}`);
-    if (!fs.existsSync(prDir)) {
-      fs.mkdirSync(prDir, { recursive: true });
+    const prDir = join(coverageDir, `pr-${prNumber || 'main'}`);
+    if (!existsSync(prDir)) {
+      mkdirSync(prDir, { recursive: true });
     }
     
     // 保存该会话的覆盖率数据
     const filename = `coverage-${sessionId}-${Date.now()}.json`;
-    fs.writeFileSync(
-      path.join(prDir, filename),
+    writeFileSync(
+      join(prDir, filename),
       JSON.stringify(coverage, null, 2)
     );
     
@@ -84,7 +84,7 @@ exports.handler = async (event, context) => {
       body: JSON.stringify({ error: 'Failed to process coverage data' })
     };
   }
-};
+}
 
 // 更新GitHub PR评论
 async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) {
@@ -94,9 +94,9 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
   }
   
   // 检查PR目录中的覆盖率文件
-  const coverageFiles = fs.readdirSync(prDir)
+  const coverageFiles = readdirSync(prDir)
     .filter(file => file.startsWith('coverage-'))
-    .map(file => path.join(prDir, file));
+    .map(file => join(prDir, file));
     
   if (coverageFiles.length === 0) {
     console.warn(`No coverage files found for PR #${prNumber}`);
@@ -108,7 +108,7 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
   
   coverageFiles.forEach(file => {
     try {
-      const coverageData = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      const coverageData = JSON.parse(readFileSync(file, 'utf-8'));
       Object.keys(coverageData).forEach(filePath => {
         if (!mergedCoverage[filePath]) {
           mergedCoverage[filePath] = coverageData[filePath];
@@ -155,8 +155,8 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
   });
   
   // 保存合并后的覆盖率数据
-  const mergedFilePath = path.join(prDir, 'merged-coverage.json');
-  fs.writeFileSync(mergedFilePath, JSON.stringify(mergedCoverage, null, 2));
+  const mergedFilePath = join(prDir, 'merged-coverage.json');
+  writeFileSync(mergedFilePath, JSON.stringify(mergedCoverage, null, 2));
   
   // 计算覆盖率统计信息
   const stats = calculateCoverageStats(mergedCoverage);

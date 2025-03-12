@@ -7,7 +7,6 @@ export default {
     
     if (isPR) {
       // 从 NETLIFY_DEPLOY_URL 或 DEPLOY_URL 中解析 PR 号码
-      // Netlify 的 deploy-preview URL 通常格式为: deploy-preview-[PR号].netlify.app
       let prNumber = '';
       const deployUrl = process.env.NETLIFY_DEPLOY_URL || process.env.DEPLOY_URL || '';
       
@@ -32,12 +31,19 @@ export default {
       const commitSha = process.env.COMMIT_REF || '';
       const branchName = process.env.HEAD || '';
       
+      // 设置正确的覆盖率API地址
+      // 使用当前站点的URL作为基础，指向Netlify函数
+      const siteUrl = process.env.URL || deployUrl;
+      const coverageApiUrl = `${siteUrl}/.netlify/functions/coverage`;
+      
       console.log(`检测到PR #${prNumber}，分支: ${branchName}，提交: ${commitSha}`);
+      console.log(`覆盖率API地址: ${coverageApiUrl}`);
       
       // 设置环境变量用于构建
       process.env.PR_NUMBER = prNumber;
       process.env.BRANCH_NAME = branchName;
       process.env.COMMIT_SHA = commitSha;
+      process.env.COVERAGE_API_URL = coverageApiUrl;
       
       // 修改.env文件，确保这些环境变量在构建时可用
       utils.status.show({
@@ -51,6 +57,7 @@ VITE_PR_NUMBER=${prNumber}
 VITE_BRANCH_NAME=${branchName}
 VITE_COMMIT_SHA=${commitSha}
 VITE_COLLECT_COVERAGE=true
+VITE_COVERAGE_API_URL=${coverageApiUrl}
       `.trim();
       
       fs.writeFileSync('.env.production', envContent);
@@ -60,19 +67,27 @@ VITE_COLLECT_COVERAGE=true
         VITE_PR_NUMBER: prNumber,
         VITE_BRANCH_NAME: branchName,
         VITE_COMMIT_SHA: commitSha,
-        VITE_COLLECT_COVERAGE: 'true'
-      });
-      
-      // 打印所有可能包含PR信息的环境变量，用于调试
-      console.log('所有相关环境变量：');
-      [
-        'CONTEXT', 'DEPLOY_URL', 'NETLIFY_DEPLOY_URL', 'PULL_REQUEST', 
-        'REVIEW_ID', 'BRANCH', 'HEAD', 'COMMIT_REF'
-      ].forEach(key => {
-        console.log(`${key}: ${process.env[key]}`);
+        VITE_COLLECT_COVERAGE: 'true',
+        VITE_COVERAGE_API_URL: coverageApiUrl
       });
     } else {
       console.log('不是PR构建，跳过设置PR环境变量');
+      
+      // 即使不是PR构建，也设置覆盖率API地址（用于主分支覆盖率收集）
+      const siteUrl = process.env.URL || '';
+      if (siteUrl) {
+        const coverageApiUrl = `${siteUrl}/.netlify/functions/coverage`;
+        
+        // 更新.env文件，但不启用覆盖率收集
+        const envContent = `
+VITE_COLLECT_COVERAGE=false
+VITE_COVERAGE_API_URL=${coverageApiUrl}
+        `.trim();
+        
+        fs.writeFileSync('.env.production', envContent);
+        
+        console.log('为主分支设置了覆盖率API地址（但未启用覆盖率收集）');
+      }
     }
   }
 }
