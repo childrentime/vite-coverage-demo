@@ -235,7 +235,7 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
 ${fileReports}
 
 > 本报告基于实际用户访问页面的交互生成，仅统计PR修改的文件
-> 上次更新时间: ${new Date().toISOString()}`;
+> 上次更新时间: ${getChineseTimeString()}`;
 
       console.log('准备更新GitHub评论');
       
@@ -488,4 +488,22 @@ function generateFileReports(coverage) {
   });
   
   return fileReports;
+}
+
+function getChineseTimeString() {
+  const now = new Date();
+  
+  // 转换为中国时间 (UTC+8)
+  const options = { 
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  };
+  
+  return new Intl.DateTimeFormat('zh-CN', options).format(now);
 }
