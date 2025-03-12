@@ -1,3 +1,5 @@
+import fs from 'fs';
+
 export default {
   onPreBuild: ({ utils }) => {
     // 获取Netlify环境变量
@@ -29,7 +31,7 @@ VITE_COMMIT_SHA=${commitSha}
 VITE_COLLECT_COVERAGE=true
       `.trim();
       
-      require('fs').writeFileSync('.env.production', envContent);
+      fs.writeFileSync('.env.production', envContent);
     } else {
       console.log('不是PR构建，跳过设置PR环境变量');
     }
