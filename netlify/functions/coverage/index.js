@@ -1,4 +1,4 @@
-import { Octokit } from '@octokit/rest';
+import axios from 'axios';
 import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -12,6 +12,16 @@ const coverageDir = join('/tmp', 'coverage-data');
 if (!existsSync(coverageDir)) {
   mkdirSync(coverageDir, { recursive: true });
 }
+
+// 配置axios实例，用于GitHub API请求
+const githubAPI = axios.create({
+  baseURL: 'https://api.github.com',
+  headers: {
+    'Authorization': `token ${GITHUB_TOKEN}`,
+    'Accept': 'application/vnd.github.v3+json',
+    'Content-Type': 'application/json'
+  }
+});
 
 export async function handler(event, context) {
   // 允许跨域请求
@@ -198,15 +208,6 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
   
   // 更新GitHub PR评论
   try {
-    // 创建Octokit实例
-    const octokit = new Octokit({ 
-      auth: GITHUB_TOKEN,
-      // 添加下面的选项，解决"endpoint is not iterable"错误
-      request: {
-        fetch: fetch
-      }
-    });
-    
     // 生成评论内容
     const commentBody = `## 📊 代码覆盖率报告 (${branchName})
 提交: ${commitSha ? commitSha.substring(0, 7) : 'unknown'}
@@ -225,37 +226,32 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
     console.log('准备更新GitHub评论');
     
     try {
-      // 直接尝试创建评论，如果已存在类似评论则忽略
-      await octokit.issues.createComment({
-        owner: REPO_OWNER,
-        repo: REPO_NAME,
-        issue_number: parseInt(prNumber, 10),
-        body: commentBody
-      });
+      // 先尝试创建新评论
+      await githubAPI.post(
+        `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`,
+        { body: commentBody }
+      );
       console.log(`在PR #${prNumber}上创建了覆盖率评论`);
     } catch (createError) {
       console.error('创建评论失败，尝试查找并更新现有评论:', createError);
       
       try {
         // 查找现有评论
-        const { data: comments } = await octokit.issues.listComments({
-          owner: REPO_OWNER,
-          repo: REPO_NAME,
-          issue_number: parseInt(prNumber, 10)
-        });
+        const response = await githubAPI.get(
+          `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`
+        );
         
+        const comments = response.data;
         const coverageComment = comments.find(comment => 
           comment.body && comment.body.includes('📊 代码覆盖率报告')
         );
         
         if (coverageComment) {
           // 更新现有评论
-          await octokit.issues.updateComment({
-            owner: REPO_OWNER,
-            repo: REPO_NAME,
-            comment_id: coverageComment.id,
-            body: commentBody
-          });
+          await githubAPI.patch(
+            `/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${coverageComment.id}`,
+            { body: commentBody }
+          );
           console.log(`更新了PR #${prNumber}上的覆盖率评论`);
         } else {
           console.warn(`未找到PR #${prNumber}上的覆盖率评论，无法更新`);
