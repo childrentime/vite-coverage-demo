@@ -8,8 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "start:server": "cd server && node api.js",
-    "dev:with-coverage": "cross-env COLLECT_COVERAGE=true vite",
-    "build:with-coverage": "cross-env COLLECT_COVERAGE=true tsc && vite build"
+    "dev:with-coverage": "cross-env COLLECT_COVERAGE=true VITE_COLLECT_COVERAGE=true vite",
+    "build:with-coverage": "cross-env COLLECT_COVERAGE=true VITE_COLLECT_COVERAGE=true tsc && vite build"
   },
   "dependencies": {
     "@octokit/auth-token": "^5.1.2",

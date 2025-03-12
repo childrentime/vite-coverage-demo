@@ -10,6 +10,7 @@ const SESSION_ID = uuidv4();
 
 // 是否启用覆盖率收集
 const COLLECT_COVERAGE = import.meta.env.VITE_COLLECT_COVERAGE === "true";
+console.log("COLLECT_COVERAGE:", COLLECT_COVERAGE);
 
 // PR和分支信息
 const PR_NUMBER = import.meta.env.VITE_PR_NUMBER || "";
