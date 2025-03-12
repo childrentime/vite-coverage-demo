@@ -152,6 +152,7 @@ function reportCurrentCoverageSync() {
  * 上报当前覆盖率数据
  */
 export async function reportCurrentCoverage() {
+  console.log('coverage',COLLECT_COVERAGE, window.__coverage__)
   if (!COLLECT_COVERAGE || !window.__coverage__) {
     return;
   }

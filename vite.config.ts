@@ -13,7 +13,10 @@ export default defineConfig( {
         include: 'src/*',
         exclude: ['node_modules', 'test/', '**/*.test.tsx', '**/*.spec.tsx'],
         extension: ['.js', '.jsx', '.ts', '.tsx'],
-        requireEnv: false, // 允许在任何环境下收集覆盖率数据
+        requireEnv: false, // 允许在任何环境下收集覆盖率数据,
+        checkProd: false, // 不检查生产环境
+        cypress: false,
+        forceBuildInstrument: true
       }),
     ],
     
