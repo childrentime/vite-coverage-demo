@@ -74,9 +74,6 @@ importers:
       css-loader:
         specifier: ^7.1.2
         version: 7.1.2(webpack@5.98.0)
-      dotenv-webpack:
-        specifier: ^8.1.0
-        version: 8.1.0(webpack@5.98.0)
       espree:
         specifier: ^10.3.0
         version: 10.3.0
@@ -186,6 +183,9 @@ importers:
       cross-env:
         specifier: ^7.0.3
         version: 7.0.3
+      dotenv-webpack:
+        specifier: ^8.1.0
+        version: 8.1.0(webpack@5.98.0)
       eslint:
         specifier: ^9.21.0
         version: 9.22.0(jiti@2.4.2)
