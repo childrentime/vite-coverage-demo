@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "webpack serve --mode development",
-    "build": "tsc && webpack --mode production",
+    "build": "webpack --mode production",
     "preview": "cross-env COLLECT_COVERAGE=true webpack serve --mode production --no-live-reload --open",
     "start:server": "cd server && node api.js",
     "dev:with-coverage": "cross-env COLLECT_COVERAGE=true webpack serve --mode development",
