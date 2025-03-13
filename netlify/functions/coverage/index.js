@@ -182,17 +182,17 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
     
     console.log(`找到 ${intersectionFiles.length} 个PR文件与覆盖率数据有交集`);
     
-    // 4. 对于交集文件，找出未覆盖的diff行
-    const uncoveredDiffLines = findUncoveredDiffLines(coverageData, prDiffInfo, intersectionFiles);
+    // 4. 对于交集文件，找出未覆盖的函数
+    const uncoveredFunctions = findUncoveredFunctions(coverageData, prDiffInfo, intersectionFiles);
     
     // 5. 生成文件覆盖率表
     const fileStatsTable = generateFileStatsTable(coverageData, intersectionFiles);
     
-    // 6. 生成未覆盖行报告
-    const uncoveredReport = generateUncoveredReport(uncoveredDiffLines, commitSha);
+    // 6. 生成未覆盖函数报告
+    const uncoveredReport = generateUncoveredFunctionsReport(uncoveredFunctions, commitSha);
     
     // 7. 生成评论内容
-    const commentBody = `## 📊 PR增量代码覆盖率报告 (${branchName})
+    const commentBody = `## 📊 PR函数代码覆盖率报告 (${branchName})
 提交: ${commitSha ? commitSha.substring(0, 7) : 'unknown'}
 
 ### 文件详细覆盖率
@@ -201,11 +201,11 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
 |------|----------|----------|----------|
 ${fileStatsTable}
 
-### 未覆盖的PR修改
+### 未覆盖的函数
 
 ${uncoveredReport}
 
-> 本报告基于实际用户访问页面的交互生成，仅统计PR修改的文件
+> 本报告基于实际用户访问页面的交互生成，仅统计PR修改的文件中未覆盖的函数
 > 上次更新时间: ${getChineseTimeString()}`;
     
     // 8. 更新或创建PR评论
@@ -429,8 +429,8 @@ function findMatchingCoverageFile(coverageData, prFile) {
   return null;
 }
 
-// 查找未覆盖的diff行
-function findUncoveredDiffLines(coverageData, prDiffInfo, intersectionFiles) {
+// 查找未覆盖的函数
+function findUncoveredFunctions(coverageData, prDiffInfo, intersectionFiles) {
   const result = [];
   
   // 遍历有交集的文件
@@ -438,59 +438,50 @@ function findUncoveredDiffLines(coverageData, prDiffInfo, intersectionFiles) {
     const fileCoverage = coverageData[coverageFile];
     const addedLines = prInfo.changedLines.additions;
     
-    if (addedLines.length === 0) {
-      return; // 跳过没有新增行的文件
+    if (addedLines.length === 0 || !fileCoverage.fnMap || !fileCoverage.f) {
+      return; // 跳过没有新增行或没有函数映射的文件
     }
     
-    // 查找未覆盖的行
-    const uncoveredLines = [];
+    // 查找未覆盖的函数
+    const uncoveredFunctions = [];
     
-    // 创建行号到语句的映射
-    const lineToStatements = {};
-    
-    // 如果有语句映射，构建行号到语句的映射
-    if (fileCoverage.statementMap && fileCoverage.s) {
-      Object.keys(fileCoverage.statementMap).forEach(stmtId => {
-        const stmt = fileCoverage.statementMap[stmtId];
-        if (stmt.start) {
-          const line = stmt.start.line;
-          if (!lineToStatements[line]) {
-            lineToStatements[line] = [];
-          }
-          lineToStatements[line].push(stmtId);
-        }
-      });
-      
-      // 检查每一个添加的行
-      addedLines.forEach(lineNum => {
-        // 如果这一行有语句
-        if (lineToStatements[lineNum]) {
-          // 检查该行的所有语句是否都未被覆盖
-          const stmtIds = lineToStatements[lineNum];
-          // 如果所有语句都未覆盖，标记为未覆盖行
-          const allUncovered = stmtIds.every(stmtId => fileCoverage.s[stmtId] === 0);
+    // 检查每个函数是否未被覆盖
+    Object.keys(fileCoverage.fnMap).forEach(fnId => {
+      // 如果函数未被调用
+      if (fileCoverage.f[fnId] === 0) {
+        const fnInfo = fileCoverage.fnMap[fnId];
+        
+        // 获取函数的开始和结束行
+        const startLine = fnInfo.loc ? fnInfo.loc.start.line : 
+                         (fnInfo.decl ? fnInfo.decl.start.line : null);
+        const endLine = fnInfo.loc ? fnInfo.loc.end.line : 
+                       (fnInfo.line ? fnInfo.line : startLine);
+        
+        if (startLine && endLine) {
+          // 检查函数是否与PR改动有交集
+          const hasIntersection = addedLines.some(line => 
+            line >= startLine && line <= endLine
+          );
           
-          if (allUncovered) {
-            uncoveredLines.push(lineNum);
+          if (hasIntersection) {
+            uncoveredFunctions.push({
+              name: fnInfo.name || `匿名函数 #${fnId}`,
+              startLine,
+              endLine
+            });
           }
-        } else {
-          // 如果这一行没有语句（如空行、注释等），标记为未覆盖
-          uncoveredLines.push(lineNum);
         }
-      });
-    } else {
-      // 如果没有语句映射，标记所有行为未覆盖
-      uncoveredLines.push(...addedLines);
-    }
+      }
+    });
     
-    // 只在有未覆盖行的情况下记录
-    if (uncoveredLines.length > 0) {
-      // 添加到结果
+    // 只在有未覆盖函数的情况下添加到结果
+    if (uncoveredFunctions.length > 0) {
       result.push({
         prFile,
         coverageFile,
-        totalChanges: addedLines.length,
-        uncoveredLines
+        uncoveredFunctions,
+        totalFunctions: Object.keys(fileCoverage.fnMap).length,
+        uncoveredCount: uncoveredFunctions.length
       });
     }
   });
@@ -550,73 +541,28 @@ function generateFileStatsTable(coverageData, intersectionFiles) {
   return fileStats;
 }
 
-// 生成未覆盖的行报告 - 使用GitHub的直接文件引用
-function generateUncoveredReport(uncoveredDiffLines, commitSha) {
-  if (uncoveredDiffLines.length === 0) {
-    return "*所有修改的代码行都已被覆盖* ✅";
+// 生成未覆盖的函数报告
+function generateUncoveredFunctionsReport(uncoveredFunctions, commitSha) {
+  if (uncoveredFunctions.length === 0) {
+    return "*所有修改的函数都已被覆盖* ✅";
   }
   
-  let report = "以下是PR中修改的代码行未被测试覆盖到的部分：\n\n";
+  let report = "";
   
-  // 处理每个文件
-  uncoveredDiffLines.forEach(info => {
-    const simplifiedPath = info.prFile.replace(/^.*\/src\//, 'src/');
-    
-    // 计算覆盖百分比
-    const coveredCount = info.totalChanges - info.uncoveredLines.length;
-    const coveragePercent = (coveredCount / info.totalChanges * 100).toFixed(2);
+  uncoveredFunctions.forEach(fileInfo => {
+    const simplifiedPath = fileInfo.prFile.replace(/^.*\/src\//, 'src/');
     
     report += `#### \`${simplifiedPath}\`\n`;
-    report += `* 修改行数: ${info.totalChanges}\n`;
-    report += `* 未覆盖行数: ${info.uncoveredLines.length}\n`;
-    report += `* 覆盖率: ${coveragePercent}%\n\n`;
+    report += `* 未覆盖函数: ${fileInfo.uncoveredCount}/${fileInfo.totalFunctions}\n\n`;
     
-    // 使用GitHub直接文件引用语法展示未覆盖的行
-    const groupedLines = groupConsecutiveNumbers(info.uncoveredLines);
-    
-    report += `##### 未覆盖的代码片段:\n\n`;
-    
-    groupedLines.forEach((group, index) => {
-      const startLine = group[0];
-      const endLine = group[group.length - 1];
-      
-      // 使用完整的GitHub链接格式
-      if (group.length === 1) {
-        // 单行引用
-        report += `https://github.com/${REPO_OWNER}/${REPO_NAME}/blob/${commitSha}/${info.prFile}#L${startLine}\n\n`;
-      } else {
-        // 多行引用
-        report += `https://github.com/${REPO_OWNER}/${REPO_NAME}/blob/${commitSha}/${info.prFile}#L${startLine}-L${endLine}\n\n`;
-      }
+    fileInfo.uncoveredFunctions.forEach(fn => {
+      // 使用GitHub文件引用格式
+      report += `* \`${fn.name}\` (行 ${fn.startLine}-${fn.endLine}): `;
+      report += `https://github.com/${REPO_OWNER}/${REPO_NAME}/blob/${commitSha}/${fileInfo.prFile}#L${fn.startLine}-L${fn.endLine}\n\n`;
     });
   });
   
   return report;
-}
-
-// 将连续的数字分组
-function groupConsecutiveNumbers(numbers) {
-  if (numbers.length === 0) return [];
-  
-  // 确保数字是排序的
-  const sortedNumbers = [...numbers].sort((a, b) => a - b);
-  
-  const groups = [];
-  let currentGroup = [sortedNumbers[0]];
-  
-  for (let i = 1; i < sortedNumbers.length; i++) {
-    if (sortedNumbers[i] === sortedNumbers[i-1] + 1) {
-      // 如果是连续的，添加到当前组
-      currentGroup.push(sortedNumbers[i]);
-    } else {
-      // 否则创建新组
-      groups.push(currentGroup);
-      currentGroup = [sortedNumbers[i]];
-    }
-  }
-  
-  groups.push(currentGroup);
-  return groups;
 }
 
 // 更新或创建PR评论
@@ -628,7 +574,7 @@ async function updateOrCreateComment(prNumber, commentBody) {
     );
     
     const coverageComment = comments.find(comment => 
-      comment.body && comment.body.includes('📊 PR增量代码覆盖率报告')
+      comment.body && comment.body.includes('📊 PR函数代码覆盖率报告')
     );
     
     if (coverageComment) {

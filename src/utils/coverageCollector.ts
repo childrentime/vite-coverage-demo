@@ -1,33 +1,26 @@
 import { v4 as uuidv4 } from "uuid";
+import { CoverageMetadata } from "./types";
 
 // 覆盖率收集服务的URL
 const COVERAGE_API_URL = 
-  import.meta.env.VITE_COVERAGE_API_URL || "/.netlify/functions/coverage";
+  process.env.VITE_COVERAGE_API_URL || "/.netlify/functions/coverage";
 
 // 会话ID，用于标识单个用户的浏览会话
 const SESSION_ID = uuidv4();
 
 // 是否启用覆盖率收集
-const COLLECT_COVERAGE = import.meta.env.VITE_COLLECT_COVERAGE === "true";
+const COLLECT_COVERAGE = process.env.VITE_COLLECT_COVERAGE === "true";
 console.log("COVERAGE_API_URL:", COVERAGE_API_URL);
 console.log("COLLECT_COVERAGE:", COLLECT_COVERAGE);
 
 // PR和分支信息
-const PR_NUMBER = import.meta.env.VITE_PR_NUMBER || "";
-const BRANCH_NAME = import.meta.env.VITE_BRANCH_NAME || "main";
-const COMMIT_SHA = import.meta.env.VITE_COMMIT_SHA || "";
+const PR_NUMBER = process.env.VITE_PR_NUMBER || "";
+const BRANCH_NAME = process.env.VITE_BRANCH_NAME || "main";
+const COMMIT_SHA = process.env.VITE_COMMIT_SHA || "";
 
 // 存储键名
 const COVERAGE_STORAGE_KEY = "coverage_data";
 
-interface CoverageMetadata {
-  prNumber: string;
-  branchName: string;
-  commitSha: string;
-  sessionId: string;
-  timestamp: number;
-  incremental: boolean; // 标记是否为增量覆盖率数据
-}
 
 /**
  * localStorage辅助函数，支持JSON序列化和反序列化
@@ -89,14 +82,10 @@ export async function initCoverageCollector() {
         reportCurrentCoverage(false).catch(err => {
           console.error("初始上报失败:", err);
         });
-      }, 3000);
-      
-      // 已完成初始上报，不再需要监听visibilitychange事件
-      document.removeEventListener('visibilitychange', reportIfVisible);
+      }, 5000);
     }
   };
 
-  document.addEventListener('visibilitychange', reportIfVisible);
   reportIfVisible();
 
   console.log("覆盖率收集器初始化完成，会话ID:", SESSION_ID);
@@ -185,15 +174,6 @@ async function reportCoverage(coverage: any, incremental: boolean) {
   } catch (error) {
     console.error("发送覆盖率数据失败:", error);
     throw error;
-  }
-}
-
-/**
- * 声明window上的全局变量
- */
-declare global {
-  interface Window {
-    __coverage__: any;
   }
 }
 
