@@ -12,6 +12,7 @@ function App() {
     
     // 主动上报覆盖率
     if (process.env.COLLECT_COVERAGE === 'true') {
+      console.log('process.env.COLLECT_COVERAGE:', process.env.COLLECT_COVERAGE)
       reportCurrentCoverage().catch(console.error)
     }
   }
