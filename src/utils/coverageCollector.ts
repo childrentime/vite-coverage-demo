@@ -196,3 +196,7 @@ declare global {
     __coverage__: any;
   }
 }
+
+export function unusedFunction() {
+  console.log("这是一个未被使用的函数");
+}
