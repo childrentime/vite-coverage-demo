@@ -189,7 +189,7 @@ async function updatePullRequestComment(prNumber, branchName, commitSha, prDir) 
     const fileStatsTable = generateFileStatsTable(coverageData, intersectionFiles);
     
     // 6. 生成未覆盖行报告
-    const uncoveredReport = generateUncoveredReport(uncoveredDiffLines);
+    const uncoveredReport = generateUncoveredReport(uncoveredDiffLines, commitSha);
     
     // 7. 生成评论内容
     const commentBody = `## 📊 PR增量代码覆盖率报告 (${branchName})
@@ -550,8 +550,8 @@ function generateFileStatsTable(coverageData, intersectionFiles) {
   return fileStats;
 }
 
-// 生成未覆盖的行报告
-function generateUncoveredReport(uncoveredDiffLines) {
+// 生成未覆盖的行报告 - 使用GitHub链接
+function generateUncoveredReport(uncoveredDiffLines, commitSha) {
   if (uncoveredDiffLines.length === 0) {
     return "*所有修改的代码行都已被覆盖* ✅";
   }
@@ -569,24 +569,30 @@ function generateUncoveredReport(uncoveredDiffLines) {
     report += `#### \`${simplifiedPath}\`\n`;
     report += `* 修改行数: ${info.totalChanges}\n`;
     report += `* 未覆盖行数: ${info.uncoveredLines.length}\n`;
-    report += `* 覆盖率: ${coveragePercent}%\n`;
+    report += `* 覆盖率: ${coveragePercent}%\n\n`;
     
-    // 列出未覆盖的行号
-    if (info.uncoveredLines.length > 0) {
-      const groupedLines = groupConsecutiveNumbers(info.uncoveredLines);
-      report += `* 未覆盖的行号: `;
+    // 使用GitHub链接展示未覆盖的行
+    const groupedLines = groupConsecutiveNumbers(info.uncoveredLines);
+    
+    if (groupedLines.length > 0) {
+      report += `##### 未覆盖的代码行:\n\n`;
       
       groupedLines.forEach((group, index) => {
-        if (index > 0) report += ', ';
+        const startLine = group[0];
+        const endLine = group[group.length - 1];
+        
+        // 根据GitHub的链接格式创建指向特定行的链接
+        // 格式: https://github.com/OWNER/REPO/blob/COMMIT/PATH#L{START}-L{END}
+        const fileLink = `https://github.com/${REPO_OWNER}/${REPO_NAME}/blob/${commitSha}/${info.prFile}`;
         
         if (group.length === 1) {
-          report += `${group[0]}`;
+          report += `- [第 ${startLine} 行](${fileLink}#L${startLine})\n`;
         } else {
-          report += `${group[0]}-${group[group.length - 1]}`;
+          report += `- [第 ${startLine}-${endLine} 行](${fileLink}#L${startLine}-L${endLine})\n`;
         }
       });
       
-      report += '\n\n';
+      report += '\n';
     }
   });
   
@@ -621,40 +627,35 @@ function groupConsecutiveNumbers(numbers) {
 // 更新或创建PR评论
 async function updateOrCreateComment(prNumber, commentBody) {
   try {
-    // 先尝试创建新评论
-    await githubFetch(
-      `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`,
-      'POST',
-      { body: commentBody }
+    // 先尝试查找现有评论
+    const comments = await githubFetch(
+      `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`
     );
-    console.log(`在PR #${prNumber}上创建了覆盖率评论`);
-  } catch (createError) {
-    console.error('创建评论失败，尝试查找并更新现有评论:', createError);
     
-    try {
-      // 查找现有评论
-      const comments = await githubFetch(
-        `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`
+    const coverageComment = comments.find(comment => 
+      comment.body && comment.body.includes('📊 PR增量代码覆盖率报告')
+    );
+    
+    if (coverageComment) {
+      // 更新现有评论
+      await githubFetch(
+        `/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${coverageComment.id}`,
+        'PATCH',
+        { body: commentBody }
       );
-      
-      const coverageComment = comments.find(comment => 
-        comment.body && comment.body.includes('📊 PR增量代码覆盖率报告')
+      console.log(`更新了PR #${prNumber}上的覆盖率评论`);
+    } else {
+      // 创建新评论
+      await githubFetch(
+        `/repos/${REPO_OWNER}/${REPO_NAME}/issues/${parseInt(prNumber, 10)}/comments`,
+        'POST',
+        { body: commentBody }
       );
-      
-      if (coverageComment) {
-        // 更新现有评论
-        await githubFetch(
-          `/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${coverageComment.id}`,
-          'PATCH',
-          { body: commentBody }
-        );
-        console.log(`更新了PR #${prNumber}上的覆盖率评论`);
-      } else {
-        console.warn(`未找到PR #${prNumber}上的覆盖率评论，无法更新`);
-      }
-    } catch (listError) {
-      console.error('查找评论失败:', listError);
+      console.log(`在PR #${prNumber}上创建了覆盖率评论`);
     }
+  } catch (error) {
+    console.error('更新或创建评论失败:', error);
+    throw error;
   }
 }
 
