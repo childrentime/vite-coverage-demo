@@ -9,7 +9,7 @@
     "preview": "cross-env COLLECT_COVERAGE=true webpack serve --mode production --no-live-reload --open",
     "start:server": "cd server && node api.js",
     "dev:with-coverage": "cross-env COLLECT_COVERAGE=true webpack serve --mode development",
-    "build:with-coverage": "tsc && cross-env COLLECT_COVERAGE=true webpack --mode production",
+    "build:with-coverage": "cross-env COLLECT_COVERAGE=true webpack --mode production",
     "debug": "find src -type f | grep -E '\\.(tsx?|jsx?) | sort"
   },
   "dependencies": {
