@@ -550,7 +550,7 @@ function generateFileStatsTable(coverageData, intersectionFiles) {
   return fileStats;
 }
 
-// 生成未覆盖的行报告 - 使用GitHub链接
+// 生成未覆盖的行报告 - 使用GitHub的直接文件引用
 function generateUncoveredReport(uncoveredDiffLines, commitSha) {
   if (uncoveredDiffLines.length === 0) {
     return "*所有修改的代码行都已被覆盖* ✅";
@@ -571,29 +571,24 @@ function generateUncoveredReport(uncoveredDiffLines, commitSha) {
     report += `* 未覆盖行数: ${info.uncoveredLines.length}\n`;
     report += `* 覆盖率: ${coveragePercent}%\n\n`;
     
-    // 使用GitHub链接展示未覆盖的行
+    // 使用GitHub直接文件引用语法展示未覆盖的行
     const groupedLines = groupConsecutiveNumbers(info.uncoveredLines);
     
-    if (groupedLines.length > 0) {
-      report += `##### 未覆盖的代码行:\n\n`;
+    report += `##### 未覆盖的代码片段:\n\n`;
+    
+    groupedLines.forEach((group, index) => {
+      const startLine = group[0];
+      const endLine = group[group.length - 1];
       
-      groupedLines.forEach((group, index) => {
-        const startLine = group[0];
-        const endLine = group[group.length - 1];
-        
-        // 根据GitHub的链接格式创建指向特定行的链接
-        // 格式: https://github.com/OWNER/REPO/blob/COMMIT/PATH#L{START}-L{END}
-        const fileLink = `https://github.com/${REPO_OWNER}/${REPO_NAME}/blob/${commitSha}/${info.prFile}`;
-        
-        if (group.length === 1) {
-          report += `- [第 ${startLine} 行](${fileLink}#L${startLine})\n`;
-        } else {
-          report += `- [第 ${startLine}-${endLine} 行](${fileLink}#L${startLine}-L${endLine})\n`;
-        }
-      });
-      
-      report += '\n';
-    }
+      // 使用完整的GitHub链接格式
+      if (group.length === 1) {
+        // 单行引用
+        report += `https://github.com/${REPO_OWNER}/${REPO_NAME}/blob/${commitSha}/${info.prFile}#L${startLine}\n\n`;
+      } else {
+        // 多行引用
+        report += `https://github.com/${REPO_OWNER}/${REPO_NAME}/blob/${commitSha}/${info.prFile}#L${startLine}-L${endLine}\n\n`;
+      }
+    });
   });
   
   return report;
