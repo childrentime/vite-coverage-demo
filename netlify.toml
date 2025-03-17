@@ -9,7 +9,7 @@
 
 # 部署预览的配置（PR）
 [context.deploy-preview]
-  environment = { COLLECT_COVERAGE = "true", VITE_COVERAGE_API_URL = "https://your-coverage-api.example.com/api/coverage" }
+  environment = { COLLECT_COVERAGE = "true" }
 
 # 定义构建前的脚本，获取PR信息
 [build.environment]
