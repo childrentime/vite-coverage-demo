@@ -23,3 +23,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 function unusedFunction() {
   console.log('这是一个未被调用的函数')
 }
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function unusedFunction1() {
+  console.log('这是一个未被调用的函数')
+}
